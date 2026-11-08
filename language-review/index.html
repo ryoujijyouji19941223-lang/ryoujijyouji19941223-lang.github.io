@@ -20,7 +20,7 @@
   <!-- 1. 今日の復習キュー -->
   <section id="view-queue" class="view">
     <h2>今日の復習キュー</h2>
-    <p class="hint">おさらいは配信の3日後、テストは翌週の同じ曜日。「まだ」にした行だけ、翌日と3日後に早めに出ます。</p>
+    <p class="hint">おさらいは配信の3日後、テストは翌週の同じ曜日。「クイズで復習」で問題を解くと自動で採点され、そのまま記録になります。間違えた行だけ、翌日と3日後に早めに出ます。</p>
     <div id="queue-list"></div>
   </section>
 
@@ -45,32 +45,9 @@
     <div id="phrases-list"></div>
   </section>
 
-  <!-- 4. 侍言葉コーナー -->
-  <section id="view-samurai" class="view" hidden>
-    <h2>侍言葉コーナー</h2>
-    <p class="hint">13言語の枠とは別のお楽しみ。江戸時代の武士の言葉を、少しずつ。</p>
-
-    <article class="card">
-      <h3>第1回 「上様（うえさま）」</h3>
-      <p><strong>意味：</strong>将軍や主君への、敬った呼びかけ。今の言葉なら「将軍様」に近いけれど、それより一段と丁寧で、身分がはっきり分かれていた時代の言葉です。</p>
-      <p><strong>時代背景：</strong>江戸時代は身分の社会。将軍は特別な存在で、家臣でも直接名前を呼ぶことはなく、「上様」と呼びました。誰に何と言うかで、その人の立場が分かる時代だったのです。</p>
-      <p><strong>『暴れん坊将軍』では：</strong>徳川吉宗は普段、「徳田新之助（とくだ しんのすけ）」として町に紛れています。正体を知る者だけが「上様」と呼ぶので、正体が割れる場面でこの一言が出ると、ぐっと盛り上がります。</p>
-    </article>
-
-    <article class="card">
-      <h3>「ござる」の話</h3>
-      <p>「ござる」の元は「御座る（ござる）」＝「ある・いる」の丁寧な言い方。今の「ございます」は、この流れの子孫です。</p>
-      <p>覚える変換は1つだけ：<strong>「です」→「でござる」</strong>。たとえば「私です」→「拙者（せっしゃ）でござる」。これだけで侍っぽく聞こえます。</p>
-      <table class="conv">
-        <tr><th>今の言葉</th><th>侍言葉</th></tr>
-        <tr><td>私</td><td>拙者（せっしゃ）</td></tr>
-        <tr><td>です</td><td>〜でござる</td></tr>
-        <tr><td>ありがとう</td><td>かたじけない</td></tr>
-        <tr><td>承知しました</td><td>御意（ぎょい）</td></tr>
-        <tr><td>申し訳ない</td><td>面目ない（めんぼくない）</td></tr>
-      </table>
-      <p class="hint">※ 今知られている侍言葉の形は、時代劇やアニメが様式化した型も大きいです。本物の江戸の書き言葉は「候文（そうろうぶん）」といって、「〜に候」が基本でした。</p>
-    </article>
+  <!-- 4. クイズ -->
+  <section id="view-quiz" class="view" hidden>
+    <div id="quiz-box"></div>
   </section>
 </main>
 
@@ -78,7 +55,6 @@
   <button data-tab="queue" class="tab active">今日の復習</button>
   <button data-tab="shelf" class="tab">本棚</button>
   <button data-tab="phrases" class="tab">表現帳</button>
-  <button data-tab="samurai" class="tab">侍言葉</button>
 </nav>
 
 <script src="data.js"></script>
