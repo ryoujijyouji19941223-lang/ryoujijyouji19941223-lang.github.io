@@ -1,0 +1,128 @@
+/* 語学の見直しアプリ（フェーズ1）モバイル優先の素朴なCSS */
+:root {
+  --teal: #0f766e;
+  --teal-dark: #115e59;
+  --ok: #15803d;
+  --mada: #b45309;
+  --ink: #1f2937;
+  --sub: #6b7280;
+  --line: #e5e7eb;
+  --bg: #f9fafb;
+  --card: #ffffff;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+  -webkit-text-size-adjust: 100%;
+}
+.app-header {
+  background: var(--teal);
+  color: #fff;
+  padding: 14px 16px 10px;
+  position: sticky; top: 0; z-index: 5;
+}
+.app-header h1 { font-size: 20px; margin: 0; }
+.today-label { margin: 2px 0 0; font-size: 13px; opacity: .9; }
+main {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 12px 12px 96px;
+}
+.view h2 { font-size: 18px; margin: 8px 0 6px; }
+.hint { color: var(--sub); font-size: 13px; line-height: 1.6; margin: 4px 0 10px; }
+.card, .qitem, .ep-row, .phrase-row, .line-row {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+.card h3 { margin: 0 0 8px; font-size: 16px; }
+.card p { line-height: 1.7; font-size: 14px; margin: 6px 0; }
+.reason {
+  display: inline-block;
+  background: #ecfdf5;
+  color: var(--teal-dark);
+  border: 1px solid #a7f3d0;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.reason.weak { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+.q-title { font-weight: 700; font-size: 15px; }
+.q-text { font-size: 16px; line-height: 1.6; margin: 4px 0; }
+.q-ja { color: var(--sub); font-size: 14px; }
+.q-meta { color: var(--sub); font-size: 12px; margin-top: 2px; }
+.mark-btns { display: flex; gap: 8px; margin-top: 10px; }
+button.ok, button.mada {
+  flex: 1;
+  min-height: 48px;
+  font-size: 16px;
+  font-weight: 700;
+  border-radius: 10px;
+  border: 2px solid;
+  background: #fff;
+  cursor: pointer;
+}
+button.ok { color: var(--ok); border-color: var(--ok); }
+button.mada { color: var(--mada); border-color: var(--mada); }
+button.ok:active { background: #f0fdf4; }
+button.mada:active { background: #fffbeb; }
+.badge {
+  display: inline-block; font-size: 12px; border-radius: 999px;
+  padding: 1px 8px; border: 1px solid var(--line); color: var(--sub);
+  vertical-align: middle;
+}
+.badge.ok { color: var(--ok); border-color: var(--ok); }
+.badge.mada { color: var(--mada); border-color: var(--mada); }
+.badge.done { color: var(--teal-dark); border-color: var(--teal); }
+.lang-head { font-size: 16px; margin: 16px 0 8px; }
+.ep-row { cursor: pointer; width: 100%; text-align: left; font: inherit; }
+.ep-row .ep-title { font-weight: 700; font-size: 15px; }
+.ep-row .ep-meta { color: var(--sub); font-size: 12px; margin-top: 2px; }
+.back-btn {
+  min-height: 44px; padding: 0 16px; font-size: 15px;
+  border-radius: 10px; border: 1px solid var(--line); background: #fff;
+  cursor: pointer; margin-bottom: 10px;
+}
+audio { width: 100%; margin: 8px 0 4px; }
+.line-row .sp { font-weight: 700; color: var(--teal-dark); font-size: 13px; }
+.line-row .tx { font-size: 16px; line-height: 1.6; }
+.line-row .ja { color: var(--sub); font-size: 14px; }
+.line-row .mark-btns button { min-height: 40px; font-size: 14px; }
+.filters { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.filters select {
+  min-height: 44px; font-size: 15px; border-radius: 8px;
+  border: 1px solid var(--line); background: #fff; padding: 0 8px;
+}
+.filters .check { font-size: 15px; display: flex; align-items: center; gap: 6px; min-height: 44px; }
+.filters .check input { width: 22px; height: 22px; }
+table.conv { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 14px; }
+table.conv th, table.conv td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; }
+table.conv th { background: #f3f4f6; }
+.empty {
+  text-align: center; color: var(--sub); padding: 28px 12px;
+  background: var(--card); border: 1px dashed var(--line); border-radius: 12px;
+  line-height: 1.8;
+}
+.tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  display: flex;
+  background: #fff;
+  border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom);
+  z-index: 10;
+}
+.tabbar .tab {
+  flex: 1;
+  min-height: 56px;
+  border: none; background: none;
+  font-size: 14px; color: var(--sub);
+  cursor: pointer;
+}
+.tabbar .tab.active { color: var(--teal); font-weight: 700; box-shadow: inset 0 3px 0 var(--teal); }
+[dir="rtl-text"] { unicode-bidi: plaintext; }

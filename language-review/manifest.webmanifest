@@ -1,0 +1,1 @@
+{"background_color":"#f9fafb","description":"ポッドキャストで学んだ言語の、復習と見直しのためのアプリ","display":"standalone","icons":[{"purpose":"any","sizes":"any","src":"icons/icon.svg","type":"image/svg+xml"}],"lang":"ja","name":"語学の見直し","orientation":"portrait","scope":"./","short_name":"見直し","start_url":"./index.html","theme_color":"#0f766e"}
