@@ -1119,6 +1119,167 @@ window.LR_DATA = {
      "ja": ""
     }
    ]
+  },
+  {
+   "id": "tl03",
+   "lang": "tl",
+   "langName": "フィリピン語",
+   "title": "第3回 パン屋で買い物",
+   "scene": "パン屋",
+   "delivered": "2026-11-08",
+   "audio": null,
+   "lines": [
+    {
+     "sp": "Ren",
+     "text": "Magandang araw! Ngayon, pupunta tayo sa panaderya.",
+     "ja": "こんにちは！今日はパン屋に行きます。"
+    },
+    {
+     "sp": "Mio",
+     "text": "Magandang araw! Tingnan mo, maraming tinapay dito.",
+     "ja": "こんにちは！見て、ここにはパンがたくさんあるね。"
+    },
+    {
+     "sp": "Ren",
+     "text": "Oo! Mainit ang tinapay.",
+     "ja": "うん！パンは温かいね。"
+    },
+    {
+     "sp": "Mio",
+     "text": "Gusto ko ng pandesal, pakiusap.",
+     "ja": "パンデサルがほしいです、お願いします。"
+    },
+    {
+     "sp": "Ren",
+     "text": "Magkano ito?",
+     "ja": "これはいくらですか？"
+    },
+    {
+     "sp": "Mio",
+     "text": "Sampung piso.",
+     "ja": "10ペソです。"
+    },
+    {
+     "sp": "Ren",
+     "text": "Mura ito. Kukunin ko ang pandesal.",
+     "ja": "安いね。パンデサルをもらいます。"
+    },
+    {
+     "sp": "Mio",
+     "text": "Gusto ko ng ensaymada. Magkano ito?",
+     "ja": "エンサイマダがほしいな。これはいくらですか？"
+    },
+    {
+     "sp": "Ren",
+     "text": "Labinlimang piso.",
+     "ja": "15ペソです。"
+    },
+    {
+     "sp": "Mio",
+     "text": "Ayos! Dalawang ensaymada, pakiusap.",
+     "ja": "いいね！エンサイマダを2つ、お願いします。"
+    },
+    {
+     "sp": "Ren",
+     "text": "Magbabayad ako sa card.",
+     "ja": "カードで払います。"
+    },
+    {
+     "sp": "Mio",
+     "text": "Ako, magbabayad ako ng cash.",
+     "ja": "僕は現金で払います。"
+    },
+    {
+     "sp": "Ren",
+     "text": "Ang tinapay ay masarap.",
+     "ja": "パンはおいしいね。"
+    },
+    {
+     "sp": "Mio",
+     "text": "Oo, at napakasarap!",
+     "ja": "うん、それにとてもおいしい！"
+    },
+    {
+     "sp": "Ren",
+     "text": "Maraming salamat.",
+     "ja": "ありがとうございます。"
+    },
+    {
+     "sp": "Mio",
+     "text": "Maraming salamat. Paalam!",
+     "ja": "ありがとうございます。さようなら！"
+    },
+    {
+     "sp": "Ren",
+     "text": "Paalam! Hanggang sa muli!",
+     "ja": "さようなら！また会いましょう！"
+    },
+    {
+     "sp": "Ren",
+     "text": "Ngayon, magsanay tayo.",
+     "ja": "今から練習しましょう。"
+    },
+    {
+     "sp": "Ren",
+     "text": "Gusto ko ng pandesal.",
+     "ja": "パンデサルがほしいです。"
+    },
+    {
+     "sp": "Mio",
+     "text": "Gusto ko ng pandesal.",
+     "ja": "パンデサルがほしいです。"
+    },
+    {
+     "sp": "Ren",
+     "text": "Magbabayad ako ng cash.",
+     "ja": "現金で払います。"
+    },
+    {
+     "sp": "Mio",
+     "text": "Magbabayad ako ng cash.",
+     "ja": "現金で払います。"
+    },
+    {
+     "sp": "Ren",
+     "text": "Paalam!",
+     "ja": "さようなら！"
+    },
+    {
+     "sp": "Mio",
+     "text": "Paalam!",
+     "ja": "さようなら！"
+    },
+    {
+     "sp": "Ren",
+     "text": "Magaling! Ngayon, maliit na pagsusulit.",
+     "ja": "よくできました！今から小さなテストです。"
+    },
+    {
+     "sp": "Ren",
+     "text": "Gusto mo ng ensaymada. Ano ang sasabihin mo?",
+     "ja": "エンサイマダがほしいところです。何と言いますか？"
+    },
+    {
+     "sp": "Ren",
+     "text": "Ang tamang sagot ay: Gusto ko ng ensaymada, pakiusap.",
+     "ja": "正解は「エンサイマダがほしいです、お願いします」です。"
+    },
+    {
+     "sp": "Mio",
+     "text": "Magaling!",
+     "ja": "よくできました！"
+    },
+    {
+     "sp": "Ren",
+     "text": "Sa susunod na Linggo, pupunta tayo sa restawran.",
+     "ja": "来週の日曜日、レストランに行きます。"
+    },
+    {
+     "sp": "Mio",
+     "text": "Paalam! Hanggang sa restawran!",
+     "ja": "さようなら！レストランで会いましょう！"
+    }
+   ]
   }
  ]
 };
