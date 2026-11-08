@@ -1,11 +1,15 @@
 'use strict';
 /*
- * 語学の見直しアプリ v3
+ * 語学の見直しアプリ v4
  *
  * 本筋は「自動クイズ＋自動採点」。エピソードの行から問題を自動で作る：
  *   意味当て（外国語の文→日本語の意味を4択）／逆向き（日本語→外国語の文を4択）／
- *   穴埋め（文の内容語を隠して4択）／並べ替え（短い文をタップで並べる）／
- *   聞き取り（音声を聞いて文を4択）。
+ *   穴埋め（文の内容語を隠して4択）／入力（隠した語を打つ）／
+ *   並べ替え（短い文をタップで並べる。余分な言葉も混ざる）／
+ *   聞き取り（音声を聞いて文を4択）。本棚の回からは「ペア合わせ」もできる。
+ * v4の要点：今日の復習は言語単位のミックス復習が本筋（回を選ばない）。
+ *   セッションは「見て分かる→穴埋め→作る」の弧を描き、同じ行を続けない。
+ *   入力形式は言語ごとに表記ゆれをならして採点し、1文字違いまで「惜しい正解」。
  * 答えるとその場で正解・不正解が出て、採点結果がそのまま復習の記録になる。
  * 「できた／まだ」の自己申告ボタンは、本棚などに補助として残してある。
  *
@@ -240,106 +244,289 @@ function contentWords(text) {
   });
   return out;
 }
-/* 選択肢の材料：同じエピソード優先、足りなければ同じ言語の他エピソード */
-function linePool(ep) {
-  var pool = [];
-  ep.lines.forEach(function (ln, i) { pool.push({ ep: ep, idx: i, ln: ln }); });
-  EPISODES.forEach(function (e2) {
-    if (e2.id === ep.id || e2.lang !== ep.lang) return;
-    e2.lines.forEach(function (ln, i) { pool.push({ ep: e2, idx: i, ln: ln }); });
-  });
-  return pool;
+/* ---------- v4：正規化と入力形式の採点 ---------- */
+/* 言語ごとに表記ゆれをならしてから比べる（研究の生成ルール14：正規化してから採点） */
+function normalizeAnswer(s, lang) {
+  var t = String(s == null ? '' : s).trim();
+  if (lang === 'ar') {
+    /* 母音記号（タシュキール）とタトウィール（伸ばし記号）を落とす */
+    t = t.replace(/[ً-ٰٟـ]/g, '');
+    /* ة/ه、ى/ي のゆれと、hamza付きアリフをならす */
+    t = t.replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/[إأآ]/g, 'ا');
+  }
+  if (lang === 'el') {
+    /* トノス（アクセント記号）を外して比べる */
+    t = t.normalize('NFD').replace(/[̀-ͯ]/g, '').normalize('NFC');
+  }
+  if (lang === 'ko') t = t.replace(/\s+/g, ''); /* 韓国語は空白を無視 */
+  t = t.replace(/[^\p{L}\p{N}\s]/gu, ''); /* 句読点・記号を落とす */
+  if (lang !== 'ko') t = t.replace(/\s+/g, ' ');
+  return t.toLowerCase().trim();
 }
-function pickOptions(correctVal, candidates, keyFn) {
-  var used = {};
-  used[keyFn(correctVal)] = 1;
-  var ds = [];
-  shuffle(candidates).forEach(function (c) {
-    if (ds.length >= 3) return;
-    var k = keyFn(c);
-    if (used[k]) return;
-    used[k] = 1;
-    ds.push(c);
-  });
-  if (ds.length < 3) return null;
-  var opts = shuffle([correctVal].concat(ds));
-  return { options: opts, correct: opts.indexOf(correctVal) };
+function editDistance(a, b) {
+  var m = a.length, n = b.length;
+  if (Math.abs(m - n) > 2) return 99;
+  var prev = [], cur = [], i, j, tmp;
+  for (j = 0; j <= n; j++) prev[j] = j;
+  for (i = 1; i <= m; i++) {
+    cur[0] = i;
+    for (j = 1; j <= n; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    tmp = prev; prev = cur; cur = tmp;
+  }
+  return prev[n];
+}
+/* 入力形式の採点。戻り値 result: 'exact' 正解 / 'close' 惜しい正解（正解として記録） / 'wrong' / 'empty' */
+function gradeTyped(input, answer, lang) {
+  var a = normalizeAnswer(input, lang);
+  var b = normalizeAnswer(answer, lang);
+  if (!a) return { result: 'empty', distance: null };
+  if (a === b) return { result: 'exact', distance: 0 };
+  if (lang === 'zh') return { result: 'wrong', distance: null }; /* 中国語は完全一致のみ */
+  var d = editDistance(a, b);
+  if (d <= 1 && b.length >= 3) return { result: 'close', distance: d };
+  return { result: 'wrong', distance: d };
 }
 
-var QUIZ_FORMATS = ['meaning', 'reverse', 'fill', 'order', 'listening'];
+/* ---------- v4：選択肢（間違いの選択肢）の生成 ---------- */
+/* 同じエピソード→同じ言語の他エピソードの順に優先する（研究の生成ルール1）。
+ * 正規化して正解と重なる物・他と重なる物は捨てる（ルール5）。
+ * 長さが極端に違う物も捨てる（ルール2：長さで正解が漏れないように）。 */
+function pickDistractors(ep, correctVal, tiers, opt) {
+  opt = opt || {};
+  var lang = ep.lang;
+  var used = {};
+  used[normalizeAnswer(correctVal, lang)] = 1;
+  (opt.excludeKeys || []).forEach(function (k) { used[k] = 1; });
+  var minR = opt.minR || 0.4, maxR = opt.maxR || 2.5;
+  var pickedVals = [];
+  tiers.forEach(function (tier) {
+    shuffle(tier).forEach(function (v) {
+      if (pickedVals.length >= 3) return;
+      var k = normalizeAnswer(v, lang);
+      if (!k || used[k]) return;
+      var a = String(correctVal).length, b = String(v).length;
+      if (!a || !b) return;
+      var r = b / a;
+      if (r < minR || r > maxR) return;
+      used[k] = 1;
+      pickedVals.push(v);
+    });
+  });
+  if (pickedVals.length < 3) return null;
+  var opts = shuffle([correctVal].concat(pickedVals));
+  return { options: opts, correct: opts.indexOf(correctVal) };
+}
+/* 行レベルの候補 tiers：[同じエピソードの行, 同じ言語の他エピソードの行] から値を取る */
+function lineTiers(ep, getVal, skipIdx) {
+  var same = [], other = [];
+  ep.lines.forEach(function (ln, i) {
+    if (i === skipIdx) return;
+    var v = getVal(ln);
+    if (v) same.push(v);
+  });
+  EPISODES.forEach(function (e2) {
+    if (e2.id === ep.id || e2.lang !== ep.lang) return;
+    e2.lines.forEach(function (ln) {
+      var v = getVal(ln);
+      if (v) other.push(v);
+    });
+  });
+  return [same, other];
+}
+/* 語レベルの候補 tiers。対象の行に出てくる語は「入れても当てはまる」危険があるので除外キーに入れる */
+function wordTiers(ep, ln) {
+  var excludeKeys = [];
+  var seen = {};
+  contentWords(ln.text).forEach(function (w) {
+    var k = normalizeAnswer(w, ep.lang);
+    if (!seen[k]) { seen[k] = 1; excludeKeys.push(k); }
+  });
+  var same = [], other = [];
+  ep.lines.forEach(function (l2) {
+    if (l2 === ln) return;
+    contentWords(l2.text).forEach(function (w) { same.push(w); });
+  });
+  EPISODES.forEach(function (e2) {
+    if (e2.id === ep.id || e2.lang !== ep.lang) return;
+    e2.lines.forEach(function (l2) {
+      contentWords(l2.text).forEach(function (w) { other.push(w); });
+    });
+  });
+  return { tiers: [same, other], excludeKeys: excludeKeys };
+}
+
+var QUIZ_FORMATS = ['meaning', 'reverse', 'fill', 'type', 'order', 'listening'];
+/* 穴埋め（4択）と入力形式で共用する、隠す語と文の決定 */
+function pickClozeTarget(ep, idx) {
+  var ln = ep.lines[idx];
+  var words = contentWords(ln.text);
+  if (!words.length) return null;
+  var word = words[Math.floor(Math.random() * words.length)];
+  var sentence = ln.text.replace(word, '＿＿＿');
+  if (sentence === ln.text) return null;
+  return { word: word, sentence: sentence };
+}
 function makeQuestion(ep, idx, format) {
   var ln = ep.lines[idx];
-  var pool = linePool(ep);
-  var q = null;
   if (format === 'meaning') {
     if (!ln.ja) return null;
-    var vals = [];
-    pool.forEach(function (p) { if (p.ln.ja) vals.push(p.ln.ja); });
-    q = pickOptions(ln.ja, vals, function (s) { return s; });
-    if (!q) return null;
-    return { type: 'meaning', epId: ep.id, lineIdx: idx, text: ln.text, options: q.options, correct: q.correct };
+    var tiersM = lineTiers(ep, function (l) { return l.ja; }, idx);
+    var qm = pickDistractors(ep, ln.ja, tiersM, { minR: 0.35, maxR: 2.8 });
+    if (!qm) return null;
+    return { type: 'meaning', epId: ep.id, lineIdx: idx, text: ln.text, options: qm.options, correct: qm.correct };
   }
   if (format === 'reverse' || format === 'listening') {
-    var texts = [];
-    pool.forEach(function (p) { texts.push(p.ln.text); });
-    q = pickOptions(ln.text, texts, function (s) { return s; });
-    if (!q) return null;
-    return { type: format, epId: ep.id, lineIdx: idx, ja: ln.ja || '', text: ln.text, options: q.options, correct: q.correct };
+    var tiersT = lineTiers(ep, function (l) { return l.text; }, idx);
+    var qt = pickDistractors(ep, ln.text, tiersT, { minR: 0.35, maxR: 2.8 });
+    if (!qt) return null;
+    return { type: format, epId: ep.id, lineIdx: idx, ja: ln.ja || '', text: ln.text, options: qt.options, correct: qt.correct };
   }
-  if (format === 'fill') {
-    var words = contentWords(ln.text);
-    if (!words.length) return null;
-    var word = words[Math.floor(Math.random() * words.length)];
-    var wpool = [];
-    pool.forEach(function (p) { contentWords(p.ln.text).forEach(function (w) { wpool.push(w); }); });
-    q = pickOptions(word, wpool, function (s) { return s.toLowerCase(); });
-    if (!q) return null;
-    var sentence = ln.text.replace(word, '＿＿＿');
-    if (sentence === ln.text) return null;
-    return { type: 'fill', epId: ep.id, lineIdx: idx, sentence: sentence, word: word, ja: ln.ja || '', options: q.options, correct: q.correct };
+  if (format === 'fill' || format === 'type') {
+    var ct = pickClozeTarget(ep, idx);
+    if (!ct) return null;
+    if (format === 'type') {
+      return { type: 'type', epId: ep.id, lineIdx: idx, sentence: ct.sentence, word: ct.word, ja: ln.ja || '', text: ln.text };
+    }
+    var wt = wordTiers(ep, ln);
+    var qf = pickDistractors(ep, ct.word, wt.tiers, { minR: 0.5, maxR: 2.0, excludeKeys: wt.excludeKeys });
+    if (!qf) return null;
+    return { type: 'fill', epId: ep.id, lineIdx: idx, sentence: ct.sentence, word: ct.word, ja: ln.ja || '', options: qf.options, correct: qf.correct };
   }
   if (format === 'order') {
     var toks = splitTokens(ln.text);
     if (toks.length < 2 || toks.length > 6) return null;
     if (toks.every(function (t) { return t === toks[0]; })) return null;
-    return { type: 'order', epId: ep.id, lineIdx: idx, ja: ln.ja || '', tokens: toks };
+    var extras = pickOrderExtras(ep, ln, toks);
+    return { type: 'order', epId: ep.id, lineIdx: idx, ja: ln.ja || '', tokens: toks, extras: extras };
   }
   return null;
+}
+/* 並べ替えの「余分タイル」：同じエピソードの他の行から、答えと重ならない語を1〜2枚 */
+function pickOrderExtras(ep, ln, toks) {
+  var used = {};
+  toks.forEach(function (t) { used[normalizeAnswer(t, ep.lang)] = 1; });
+  contentWords(ln.text).forEach(function (w) { used[normalizeAnswer(w, ep.lang)] = 1; });
+  var pool = [];
+  ep.lines.forEach(function (l2) {
+    if (l2 === ln) return;
+    splitTokens(l2.text).forEach(function (t) {
+      var c = cleanWord(t);
+      if (c.length >= 2 && !used[normalizeAnswer(c, ep.lang)]) pool.push(c);
+    });
+  });
+  pool = shuffle(pool);
+  var out = [];
+  pool.forEach(function (w) {
+    if (out.length >= 2) return;
+    var k = normalizeAnswer(w, ep.lang);
+    if (used[k]) return;
+    used[k] = 1;
+    out.push(w);
+  });
+  return out;
+}
+/* 並べ替えのタイル列（extra=true のタイルは答えに不要で、置かなくてよい） */
+function buildTiles(q) {
+  var tiles = q.tokens.map(function (t) { return { t: t, extra: false }; });
+  (q.extras || []).forEach(function (t) { tiles.push({ t: t, extra: true }); });
+  return shuffle(tiles);
+}
+/* 並べ替えの答え合わせ：余分タイルは無視し、答えタイルの並びだけを見る */
+function checkOrder(q, tiles, pickedIdxs) {
+  var seq = [];
+  pickedIdxs.forEach(function (pi) { if (!tiles[pi].extra) seq.push(tiles[pi].t); });
+  if (seq.length !== q.tokens.length) return false;
+  for (var i = 0; i < seq.length; i++) if (seq[i] !== q.tokens[i]) return false;
+  return true;
+}
+function countAnswerTiles(tiles, pickedIdxs) {
+  var n = 0;
+  pickedIdxs.forEach(function (pi) { if (!tiles[pi].extra) n++; });
+  return n;
+}
+
+/* ---------- v4：セッションの弧 ---------- */
+/* 段階：0=見て分かる（意味当て・逆向き・聞き取り）→ 1=穴埋め4択 → 2=作る（入力・並べ替え）。
+ * 段階の中は行を散らして、同じ行の問題が背中合わせにならないようにする。 */
+var FORMAT_PHASE = { meaning: 0, reverse: 0, listening: 0, fill: 1, type: 2, order: 2 };
+function interleaveByLine(list, prevLineIdx) {
+  var groups = {}, order = [];
+  list.forEach(function (q) {
+    var k = String(q.lineIdx);
+    if (!groups[k]) { groups[k] = []; order.push(k); }
+    groups[k].push(q);
+  });
+  var out = [], last = prevLineIdx, remaining = list.length;
+  while (remaining > 0) {
+    var bestKey = null, bestLen = -1;
+    order.forEach(function (k) {
+      var len = groups[k].length;
+      if (!len) return;
+      if (Number(k) === last) return;
+      if (len > bestLen) { bestLen = len; bestKey = k; }
+    });
+    if (bestKey === null) { /* 避けられない場合だけ同じ行を続ける */
+      order.forEach(function (k) { if (groups[k].length && bestKey === null) bestKey = k; });
+    }
+    out.push(groups[bestKey].shift());
+    last = Number(bestKey);
+    remaining--;
+  }
+  return out;
+}
+function arrangeArc(list) {
+  var blocks = [[], [], []];
+  list.forEach(function (q) { blocks[FORMAT_PHASE[q.type]].push(q); });
+  var out = [], prev = null;
+  blocks.forEach(function (b) {
+    var a = interleaveByLine(b, prev);
+    if (a.length) prev = a[a.length - 1].lineIdx;
+    out = out.concat(a);
+  });
+  return out;
 }
 
 /* エピソードから1セッション分（目安10問）を作る */
 function genEpisodeQuiz(ep, targetLen) {
   targetLen = targetLen || QUIZ_LEN;
-  var cand = [];
+  var candByPhase = [[], [], []];
   ep.lines.forEach(function (ln, idx) {
     QUIZ_FORMATS.forEach(function (f) {
       var q = makeQuestion(ep, idx, f);
-      if (q) cand.push(q);
+      if (q) candByPhase[FORMAT_PHASE[f]].push(q);
     });
   });
-  cand = shuffle(cand);
-  var picked = [];
-  var perFormat = {};
-  var perLine = {};
-  cand.forEach(function (q) {
-    if (picked.length >= targetLen) return;
-    if ((perFormat[q.type] || 0) >= 3) return;
-    if ((perLine[q.lineIdx] || 0) >= 2) return;
-    perFormat[q.type] = (perFormat[q.type] || 0) + 1;
-    perLine[q.lineIdx] = (perLine[q.lineIdx] || 0) + 1;
-    picked.push(q);
-  });
-  if (picked.length < targetLen) {
-    cand.forEach(function (q) {
-      if (picked.length >= targetLen) return;
-      if (picked.indexOf(q) >= 0) return;
-      if ((perLine[q.lineIdx] || 0) >= 3) return;
+  function selectFrom(cands, already, perFormatCap, perLineCap) {
+    var perFormat = {}, perLine = {}, chosen = [];
+    already.forEach(function (q) {
+      perFormat[q.type] = (perFormat[q.type] || 0) + 1;
       perLine[q.lineIdx] = (perLine[q.lineIdx] || 0) + 1;
-      picked.push(q);
     });
+    shuffle(cands).forEach(function (q) {
+      if (already.length + chosen.length >= targetLen) return;
+      if ((perFormat[q.type] || 0) >= perFormatCap) return;
+      if ((perLine[q.lineIdx] || 0) >= perLineCap) return;
+      perFormat[q.type] = (perFormat[q.type] || 0) + 1;
+      perLine[q.lineIdx] = (perLine[q.lineIdx] || 0) + 1;
+      chosen.push(q);
+    });
+    return chosen;
   }
-  return picked;
+  var pickedSoFar = [];
+  var ph;
+  for (ph = 0; ph < 3; ph++) {
+    pickedSoFar = pickedSoFar.concat(selectFrom(candByPhase[ph], pickedSoFar, 3, 2));
+  }
+  for (ph = 0; ph < 3; ph++) {
+    if (pickedSoFar.length >= targetLen) break;
+    var rest = candByPhase[ph].filter(function (q) { return pickedSoFar.indexOf(q) < 0; });
+    pickedSoFar = pickedSoFar.concat(selectFrom(rest, pickedSoFar, 99, 3));
+  }
+  return arrangeArc(pickedSoFar).slice(0, targetLen);
 }
+
 /* 指定した行だけの短いクイズ（弱い行用）。keys = ['epId#idx', ...] */
 function genLineQuiz(keys, targetLen) {
   targetLen = targetLen || 5;
@@ -370,7 +557,7 @@ function genLineQuiz(keys, targetLen) {
       picked.push(q);
     });
   }
-  return picked;
+  return arrangeArc(picked);
 }
 
 /* ---------- 表示の部品 ---------- */
@@ -398,23 +585,113 @@ function lineTextHtml(ep, idx) {
   var ln = ep.lines[idx];
   var h = '';
   if (ln.sp) h += '<span class="sp">' + esc(ln.sp) + '：</span> ';
-  h += '<span class="tx" dir="auto">' + esc(ln.text) + '</span> ' + speakBtn(ep.id, idx);
+  h += '<span class="tx" dir="auto">' + lineGlossHtml(ep, idx) + '</span> ' + speakBtn(ep.id, idx);
   if (ln.ja) h += '<div class="ja">' + esc(ln.ja) + '</div>';
   return h;
 }
+
+/* ---------- v4：単語グロス（押すと意味が出る） ---------- */
+/* line.gloss = [{t, r, ja}, ...]。t を全部つなぐと行の文と一致する（道具側でも検証する）。
+ * r は読み（ギリシャ語・アラビア語・韓国語・ロシア語はカナ、中国語は pinyin）、
+ * ja はその語・区切りの短い意味。gloss の無い行は今まで通りただの文字として出す。 */
+function validateGloss(text, gloss) {
+  if (!Array.isArray(gloss)) return false;
+  var joined = '';
+  for (var i = 0; i < gloss.length; i++) {
+    var seg = gloss[i];
+    if (!seg || typeof seg.t !== 'string') return false;
+    joined += seg.t;
+  }
+  return joined === text;
+}
+function glossSegHtml(seg) {
+  if (!seg.ja && !seg.r) return esc(seg.t);
+  return '<span class="gloss-word" data-act="gloss" data-w="' + esc(seg.t.trim()) + '" data-r="' +
+    esc(seg.r || '') + '" data-ja="' + esc(seg.ja || '') + '">' + esc(seg.t) + '</span>';
+}
+/* 行全体をグロス可能に描く（本棚・表現帳・フィードバック用） */
+function lineGlossHtml(ep, idx) {
+  var ln = ep.lines[idx];
+  if (!ln.gloss || !ln.gloss.length || !validateGloss(ln.text, ln.gloss)) return esc(ln.text);
+  return ln.gloss.map(glossSegHtml).join('');
+}
+/* 穴埋め・入力形式の出題中：狙いの語を含むセグメントだけ伏せ（グロス不可）、
+ * それ以外はグロス可能にする。狙いの語がセグメント内に無ければ null を返し、
+ * 呼び出し側は平文で出す。答えの選択肢にはグロスを付けない（答えが漏れるため）。 */
+function clozeGlossHtml(ep, idx, word) {
+  var ln = ep.lines[idx];
+  if (!ln.gloss || !ln.gloss.length || !validateGloss(ln.text, ln.gloss)) return null;
+  var done = false;
+  var html = ln.gloss.map(function (seg) {
+    if (!done && word && seg.t.indexOf(word) >= 0) {
+      done = true;
+      return esc(seg.t.replace(word, '＿＿＿'));
+    }
+    return glossSegHtml(seg);
+  }).join('');
+  return done ? html : null;
+}
+function glossPopHtml(w, r, ja) {
+  return '<div class="gp-word" dir="auto">' + esc(w) + '</div>' +
+    (r ? '<div class="gp-reading">' + esc(r) + '</div>' : '') +
+    (ja ? '<div class="gp-ja">' + esc(ja) + '</div>' : '');
+}
+var glossPopEl = null;
+var glossPressAt = 0;
+var glossLastSpan = null;
+function ensureGlossPop() {
+  if (!glossPopEl) {
+    glossPopEl = document.createElement('div');
+    glossPopEl.id = 'gloss-pop';
+    glossPopEl.className = 'gloss-pop';
+    glossPopEl.hidden = true;
+    document.body.appendChild(glossPopEl);
+  }
+  return glossPopEl;
+}
+function showGlossPop(span) {
+  var pop = ensureGlossPop();
+  pop.innerHTML = glossPopHtml(span.getAttribute('data-w'), span.getAttribute('data-r'), span.getAttribute('data-ja'));
+  pop.hidden = false;
+  glossLastSpan = span;
+  var rect = span.getBoundingClientRect();
+  pop.style.left = Math.max(8, rect.left + (window.scrollX || 0)) + 'px';
+  pop.style.top = (rect.bottom + (window.scrollY || 0) + 6) + 'px';
+}
+function hideGlossPop() {
+  if (glossPopEl) glossPopEl.hidden = true;
+  glossLastSpan = null;
+}
+document.addEventListener('pointerdown', function (ev) {
+  var span = ev.target && ev.target.closest ? ev.target.closest('.gloss-word') : null;
+  if (span) {
+    if (glossPopEl && !glossPopEl.hidden && glossLastSpan === span) { hideGlossPop(); return; }
+    glossPressAt = Date.now();
+    showGlossPop(span);
+    return;
+  }
+  var inPop = ev.target && ev.target.closest ? ev.target.closest('#gloss-pop') : null;
+  if (!inPop) hideGlossPop();
+});
+document.addEventListener('pointerup', function () {
+  if (!glossPopEl || glossPopEl.hidden) return;
+  /* 長押しは離したら消す。短いタップはトグルとして残し、次のタップで消える */
+  if (Date.now() - glossPressAt >= 350) hideGlossPop();
+});
 
 /* ---------- 1. 今日の復習キュー ---------- */
 function renderQueue() {
   var today = todayStr();
   var items = buildQueue(today);
   var box = document.getElementById('queue-list');
+  var html = mixedSectionHtml(today);
   if (items.length === 0) {
     var nx = nextDueLabel(today);
-    box.innerHTML = '<div class="empty">今日の分は終わりです。お疲れさま。<br>' + esc(nx) + '</div>';
+    html += '<div class="empty">今日の期日分は終わりです。お疲れさま。<br>' + esc(nx) + '</div>';
+    box.innerHTML = html;
     return;
   }
   var shown = items.slice(0, QUEUE_CAP);
-  var html = '';
   shown.forEach(function (it) {
     var ep = EP_BY_ID[it.epId];
     if (it.kind === 'weak') {
@@ -435,10 +712,9 @@ function renderQueue() {
         '<span class="reason">' + esc(it.reason) + '</span>' +
         '<div class="q-title">' + esc(ep.langName) + '「' + esc(ep.title) + '」</div>' +
         '<div class="q-meta">場面：' + esc(ep.scene) + '／全' + ep.lines.length + '行／' + dueText + '</div>' +
-        '<div class="q-actions"><button type="button" class="quiz-btn" data-act="quiz-ep" data-ep="' +
-          esc(it.epId) + '" data-kind="' + it.kind + '">クイズで復習</button></div>' +
-        '<div class="q-meta">クイズを最後まで解くと、この' + (it.kind === 'test' ? 'テスト' : 'おさらい') +
-          'は完了として記録されます。自己申告で記録する場合はこちら。</div>' +
+        '<div class="q-actions"><button type="button" class="quiz-btn" data-act="quiz-mixed" data-lang="' +
+          esc(ep.lang) + '">' + esc(ep.langName) + 'のミックス復習で解く</button></div>' +
+        '<div class="q-meta">この回の行は、上のミックス復習の中に混ざって出ます。自己申告で記録する場合はこちら。</div>' +
         markButtons('ep-mark', 'data-kind="' + it.kind + '" data-ep="' + esc(it.epId) + '"') +
         '</div>';
     }
@@ -492,7 +768,9 @@ function episodeDetailHtml(ep) {
   html += '<p class="hint">' + fmtFull(ep.delivered) + ' 配信／場面：' + esc(ep.scene) +
     '／おさらい期日：' + fmtFull(recapDue(ep)) + '／テスト期日：' + fmtFull(testDue(ep)) + '</p>';
   html += '<div class="q-actions"><button type="button" class="quiz-btn" data-act="quiz-ep" data-ep="' +
-    esc(ep.id) + '" data-kind="free">クイズで復習</button></div>';
+    esc(ep.id) + '" data-kind="free">自由練習（この回のクイズ）</button></div>';
+  html += '<div class="q-actions"><button type="button" class="quiz-btn" data-act="quiz-match" data-ep="' +
+    esc(ep.id) + '">ペア合わせ</button></div>';
   if (ep.audio) {
     html += '<audio controls preload="none" src="' + esc(ep.audio) + '"></audio>';
   }
@@ -551,7 +829,7 @@ function startEpisodeQuiz(epId, kind) {
   quiz = {
     title: ep.langName + '「' + ep.title + '」',
     kind: kind, epId: epId, questions: qs, idx: 0, correctCount: 0,
-    answered: false, picked: []
+    answered: false, picked: [], perQ: []
   };
   showQuiz();
 }
@@ -563,12 +841,13 @@ function startLineQuiz(epId, idx) {
   quiz = {
     title: ep.langName + '「' + ep.title + '」弱い行クイズ',
     kind: 'weak', epId: epId, questions: qs, idx: 0, correctCount: 0,
-    answered: false, picked: []
+    answered: false, picked: [], perQ: []
   };
   showQuiz();
 }
 function showQuiz() {
   stopSpeak();
+  matchGame = null;
   ['queue', 'shelf', 'phrases'].forEach(function (t) {
     document.getElementById('view-' + t).hidden = true;
   });
@@ -581,6 +860,7 @@ function showQuiz() {
 }
 function closeQuiz() {
   quiz = null;
+  matchGame = null;
   stopSpeak();
   document.getElementById('view-quiz').hidden = true;
   renderAll();
@@ -593,6 +873,7 @@ function quizHeadHtml() {
     '<div class="quiz-title">' + esc(quiz.title) + '</div>';
 }
 function renderQuiz() {
+  hideGlossPop();
   var box = document.getElementById('quiz-box');
   if (!quiz) { box.innerHTML = ''; return; }
   if (quiz.idx >= quiz.questions.length) { renderQuizSummary(box); return; }
@@ -601,21 +882,29 @@ function renderQuiz() {
   var html = quizHeadHtml();
   if (q.type === 'meaning') {
     html += '<div class="q-kind">意味当て：この文の意味は？</div>' +
-      '<div class="q-prompt"><span dir="auto">' + esc(q.text) + '</span> ' + speakBtn(q.epId, q.lineIdx) + '</div>' +
+      '<div class="q-prompt"><span dir="auto">' + lineGlossHtml(ep, q.lineIdx) + '</span> ' + speakBtn(q.epId, q.lineIdx) + '</div>' +
       optionsHtml(q);
   } else if (q.type === 'reverse') {
     html += '<div class="q-kind">逆向き：この意味の文はどれ？</div>' +
       '<div class="q-prompt">' + esc(q.ja) + '</div>' + optionsHtml(q);
   } else if (q.type === 'fill') {
     html += '<div class="q-kind">穴埋め：＿＿＿に入る言葉は？</div>' +
-      '<div class="q-prompt"><span dir="auto">' + esc(q.sentence) + '</span></div>' +
+      '<div class="q-prompt"><span dir="auto">' + (clozeGlossHtml(ep, q.lineIdx, q.word) || esc(q.sentence)) + '</span></div>' +
       (q.ja ? '<div class="q-ja">意味：' + esc(q.ja) + '</div>' : '') + optionsHtml(q);
   } else if (q.type === 'listening') {
     html += '<div class="q-kind">聞き取り：音声を聞いて、言った文を選んでください</div>' +
       '<div class="q-actions"><button type="button" class="quiz-btn" data-act="quiz-listen">🔊 聞く</button></div>' +
       optionsHtml(q);
+  } else if (q.type === 'type') {
+    html += '<div class="q-kind">入力：＿＿＿に入る言葉を打ってください</div>' +
+      '<div class="q-prompt"><span dir="auto">' + (clozeGlossHtml(ep, q.lineIdx, q.word) || esc(q.sentence)) + '</span></div>' +
+      '<input type="text" id="type-input" class="type-input" dir="auto" lang="' + esc(ep.lang) + '" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ここに打つ">' +
+      (q.ja ? '<div class="q-actions"><button type="button" class="back-btn" data-act="quiz-hint">意味のヒントを見る</button></div>' +
+        '<div class="q-ja" id="type-hint" hidden>意味：' + esc(q.ja) + '</div>' : '') +
+      '<div class="q-actions"><button type="button" class="quiz-btn" data-act="quiz-type-check">答える</button></div>' +
+      '<div class="q-actions"><button type="button" class="back-btn" data-act="quiz-giveup">分からない（答えを見る）</button></div>';
   } else if (q.type === 'order') {
-    html += '<div class="q-kind">並べ替え：言葉を正しい順にタップしてください</div>' +
+    html += '<div class="q-kind">並べ替え：言葉を正しい順にタップしてください（余分な言葉が混ざっています。全部使う必要はありません）</div>' +
       (q.ja ? '<div class="q-prompt">' + esc(q.ja) + '</div>' : '') +
       '<div class="order-answer" id="order-answer"></div>' +
       '<div class="order-pool" id="order-pool"></div>' +
@@ -636,42 +925,71 @@ function optionsHtml(q) {
 function renderOrderChips() {
   var q = quiz.questions[quiz.idx];
   if (!q || q.type !== 'order') return;
-  if (!quiz.shuffledTokens) quiz.shuffledTokens = shuffle(q.tokens);
+  if (!quiz.tiles) quiz.tiles = buildTiles(q);
   var poolBox = document.getElementById('order-pool');
   var ansBox = document.getElementById('order-answer');
   var poolHtml = '';
-  quiz.shuffledTokens.forEach(function (tok, i) {
+  quiz.tiles.forEach(function (tile, i) {
     if (quiz.picked.indexOf(i) >= 0) return;
-    poolHtml += '<button type="button" class="chip" data-act="chip-pick" data-i="' + i + '">' + esc(tok) + '</button>';
+    poolHtml += '<button type="button" class="chip" data-act="chip-pick" data-i="' + i + '">' + esc(tile.t) + '</button>';
   });
   poolBox.innerHTML = poolHtml || '<span class="hint">全部置きました</span>';
   var ansHtml = '';
-  quiz.picked.forEach(function (pi, pos) {
-    ansHtml += '<button type="button" class="chip placed" data-act="chip-unpick" data-pos="' + pos + '">' +
-      esc(quiz.shuffledTokens[pi]) + '</button>';
+  quiz.picked.forEach(function (pi) {
+    ansHtml += '<button type="button" class="chip placed" data-act="chip-unpick" data-pos="' + quiz.picked.indexOf(pi) + '">' +
+      esc(quiz.tiles[pi].t) + '</button>';
   });
-  ansBox.innerHTML = ansHtml || '<span class="hint">ここに文が組み上がります</span>';
+  ansBox.innerHTML = ansHtml || '<span class="hint">ここに文が組み上がります（余分な言葉は置かなくてOK）</span>';
   var btn = document.getElementById('order-check');
-  if (btn) btn.disabled = quiz.picked.length !== q.tokens.length || quiz.answered;
+  if (btn) btn.disabled = quiz.answered || countAnswerTiles(quiz.tiles, quiz.picked) !== q.tokens.length;
 }
-/* 採点して記録する。戻り値：正解かどうか */
+/* 採点して記録する。戻り値：正解かどうか。
+ * 入力形式で正解した行は「2倍の進み」として typedOk に印を残す。 */
 function gradeCurrent(isCorrect) {
   var q = quiz.questions[quiz.idx];
   applyLineMark(q.epId, q.lineIdx, isCorrect ? 'ok' : 'mada', null);
-  if (isCorrect) quiz.correctCount++;
+  if (isCorrect) {
+    quiz.correctCount++;
+    if (q.type === 'type') {
+      var ls = lineState(lineKey(q.epId, q.lineIdx));
+      ls.typedOk = (ls.typedOk || 0) + 1;
+      saveState();
+    }
+  }
+  if (quiz.perQ) quiz.perQ.push({ epId: q.epId, lineIdx: q.lineIdx, correct: isCorrect });
   quiz.answered = true;
   return isCorrect;
 }
-function feedbackHtml(isCorrect, q) {
+function correctAnswerText(q) {
+  if (q.type === 'meaning' || q.type === 'reverse' || q.type === 'listening') return q.options[q.correct];
+  if (q.type === 'fill' || q.type === 'type') return q.word;
+  if (q.type === 'order') {
+    var ep = EP_BY_ID[q.epId];
+    return ep.lines[q.lineIdx].text;
+  }
+  return '';
+}
+/* フィードバックは全形式で必ず：正解＋元の文＋和訳＋音声ボタン（研究の生成ルール9） */
+function feedbackHtml(isCorrect, q, opts) {
+  opts = opts || {};
   var ep = EP_BY_ID[q.epId];
   var ln = ep.lines[q.lineIdx];
-  var msg = isCorrect ? '正解！' : '残念。正解は：';
-  var html = '<div class="feedback ' + (isCorrect ? 'good' : 'bad') + '">' +
-    '<div class="fb-msg">' + msg + '</div>' +
-    '<div class="fb-line"><span dir="auto">' + esc(ln.text) + '</span> ' + speakBtn(q.epId, q.lineIdx) +
+  var html = '<div class="feedback ' + (isCorrect ? 'good' : 'bad') + '">';
+  if (opts.close) {
+    html += '<div class="fb-msg">惜しい！正解として記録します</div>' +
+      '<div class="fb-answer">正しいつづり：<span dir="auto">' + esc(q.word) + '</span></div>' +
+      (opts.yours ? '<div class="q-meta">あなたの入力：<span dir="auto">' + esc(opts.yours) + '</span></div>' : '');
+  } else {
+    html += '<div class="fb-msg">' + (isCorrect ? '正解！' : '残念。') + '</div>' +
+      '<div class="fb-answer">正解：<span dir="auto">' + esc(correctAnswerText(q)) + '</span></div>';
+  }
+  html += '<div class="fb-line"><span dir="auto">' + lineGlossHtml(ep, q.lineIdx) + '</span> ' + speakBtn(q.epId, q.lineIdx) +
     (ln.ja ? '<div class="ja">' + esc(ln.ja) + '</div>' : '') + '</div>' +
+    /* ミックス復習では、答えた後にだけ「どの回の行か」を出す（記憶の結び直し用） */
+    (quiz && quiz.kind === 'mixed'
+      ? '<div class="q-meta">この行は ' + esc(ep.langName) + '「' + esc(ep.title) + '」から出ました。</div>' : '') +
     '<div class="q-meta">' + (isCorrect
-      ? 'この行は「できた」で記録しました。'
+      ? 'この行は「できた」で記録しました。' + (q.type === 'type' ? '（入力形式で言えたので2倍の進みです）' : '')
       : 'この行は「まだ」で記録しました。明日と3日後に、弱い行として先に出ます。') + '</div>' +
     '<div class="q-actions"><button type="button" class="quiz-btn" data-act="quiz-next">' +
     (quiz.idx + 1 >= quiz.questions.length ? '結果を見る' : '次へ') + '</button></div></div>';
@@ -694,9 +1012,9 @@ function answerChoice(i) {
 function answerOrder() {
   if (!quiz || quiz.answered) return;
   var q = quiz.questions[quiz.idx];
-  if (q.type !== 'order' || quiz.picked.length !== q.tokens.length) return;
-  var mine = quiz.picked.map(function (pi) { return quiz.shuffledTokens[pi]; });
-  var isCorrect = mine.join(' ') === q.tokens.join(' ');
+  if (q.type !== 'order' || !quiz.tiles) return;
+  if (countAnswerTiles(quiz.tiles, quiz.picked) !== q.tokens.length) return;
+  var isCorrect = checkOrder(q, quiz.tiles, quiz.picked);
   gradeCurrent(isCorrect);
   document.getElementById('quiz-feedback').innerHTML = feedbackHtml(isCorrect, q);
   renderOrderChips();
@@ -712,6 +1030,35 @@ function renderQuizSummary(box) {
     var label = quiz.kind === 'test' ? 'テスト' : (quiz.kind === 'prep' ? '予習' : 'おさらい');
     html += '<p>' + esc(ep.langName) + '「' + esc(ep.title) + '」の' + label + 'を完了として記録しました。</p>';
   }
+  if (quiz.kind === 'mixed') {
+    /* ミックス復習の回完了ルール：セッション自体は回の完了にならない。
+     * ただし「今日が期日の回」から3行以上出て、その半分以上を正解したら、
+     * その回のおさらい／テストを完了として記録する。満たさなければ期日のまま残る。 */
+    var today = todayStr();
+    var byEp = {};
+    (quiz.perQ || []).forEach(function (r) {
+      if (!byEp[r.epId]) byEp[r.epId] = { n: 0, ok: 0 };
+      byEp[r.epId].n++;
+      if (r.correct) byEp[r.epId].ok++;
+    });
+    var doneNames = [];
+    Object.keys(byEp).forEach(function (epId) {
+      var ep = EP_BY_ID[epId];
+      if (!ep) return;
+      var kind = episodeDueKind(ep, today);
+      if (!kind) return;
+      var s = byEp[epId];
+      if (s.n >= 3 && s.ok * 2 >= s.n) {
+        applyEpisodeMark(kind, epId, 'ok');
+        doneNames.push(ep.langName + '「' + ep.title + '」の' + (kind === 'test' ? 'テスト' : 'おさらい'));
+      }
+    });
+    if (doneNames.length) {
+      html += '<p>期日の回を完了として記録しました：' + doneNames.map(esc).join('、') + '</p>';
+    } else {
+      html += '<p class="hint">期日の回の完了条件（その回から3行以上・半分以上正解）には届かなかったので、期日の回はそのまま残ります。</p>';
+    }
+  }
   if (quiz.correctCount < total) {
     html += '<p class="hint">間違えた行は「まだ」で記録され、明日と3日後に弱い行として先に出ます。</p>';
   }
@@ -719,9 +1066,259 @@ function renderQuizSummary(box) {
   box.innerHTML = html;
 }
 
+/* ---------- v4：言語ミックス復習（今日の復習の本筋） ---------- */
+/* 考え方：回ごとに閉じたクイズでは「何が出るか分かっている」ため、本当の確認にならない。
+ * そこで今日の復習は「言語だけ選ぶ」形にする。選んだ言語の本棚ぜんぶの行から、
+ * 何が出るか分からないように混ぜて出す。できた行も確認のために混ぜる。 */
+/* エピソードが今日「おさらい／テスト」の期日かどうか（予習は含めない） */
+function episodeDueKind(ep, today) {
+  var es = state.eps[ep.id] || {};
+  if (!es.recap && recapDue(ep) <= today) return 'recap';
+  if (es.recap && !es.test && testDue(ep) <= today) return 'test';
+  return null;
+}
+/* 行のプール分け：期日の分（期日が来た回の行＋弱い行の早出し分）／できた行／その他の行。
+ * 1行は1つのプールにだけ入る（優先順位：期日＞できた＞その他）。 */
+function classifyLangLines(lang, today) {
+  var pools = { due: [], done: [], other: [] };
+  EPISODES.forEach(function (ep) {
+    if (lang !== 'all' && ep.lang !== lang) return;
+    var epDue = !!episodeDueKind(ep, today);
+    ep.lines.forEach(function (ln, idx) {
+      var ls = peekLine(lineKey(ep.id, idx));
+      var weakDue = (ls.weak || []).some(function (w) { return !w.done && w.d <= today; });
+      var entry = { ep: ep, idx: idx };
+      if (epDue || weakDue) pools.due.push(entry);
+      else if (ls.status === 'ok') pools.done.push(entry);
+      else pools.other.push(entry);
+    });
+  });
+  return pools;
+}
+/* 混ぜ方の目安：期日の分 約50%／できた行の確認 約30%／その他 約20%。
+ * プールが足りない分は、残りのプールから比例的に回して埋める。同じ行は1回だけ。 */
+function genMixedQuiz(lang, targetLen) {
+  targetLen = targetLen || 12;
+  var today = todayStr();
+  var pools = classifyLangLines(lang, today);
+  var quotas = [
+    { pool: pools.due, n: Math.round(targetLen * 0.5) },
+    { pool: pools.done, n: Math.round(targetLen * 0.3) },
+    { pool: pools.other, n: 0 }
+  ];
+  quotas[2].n = targetLen - quotas[0].n - quotas[1].n;
+  quotas.forEach(function (q) { q.pool = shuffle(q.pool); });
+  var selected = [];
+  quotas.forEach(function (q) {
+    selected = selected.concat(q.pool.slice(0, q.n));
+    q.pool = q.pool.slice(q.n);
+  });
+  /* 足りない分は残っているプールから（期日→できた→その他の順に）埋める */
+  quotas.forEach(function (q) {
+    while (selected.length < targetLen && q.pool.length) selected.push(q.pool.shift());
+  });
+  if (!selected.length) return [];
+  /* 形式の割り当て：前半は見て分かる形式、中盤は穴埋め、後半は入力／並べ替えを優先。
+   * 作れない形式は他の形式で代替し、最後に段階順へ並べ直す（arrangeArc）。 */
+  selected = shuffle(selected);
+  var n1 = Math.ceil(selected.length * 0.4);
+  var n2 = Math.ceil(selected.length * 0.3);
+  var questions = [];
+  selected.forEach(function (entry, i) {
+    var pref = i < n1 ? ['meaning', 'reverse', 'listening']
+      : (i < n1 + n2 ? ['fill'] : ['type', 'order']);
+    var tries = shuffle(pref).concat(shuffle(QUIZ_FORMATS.filter(function (f) { return pref.indexOf(f) < 0; })));
+    for (var k = 0; k < tries.length; k++) {
+      var q = makeQuestion(entry.ep, entry.idx, tries[k]);
+      if (q) { questions.push(q); break; }
+    }
+  });
+  return arrangeArc(questions);
+}
+function startMixedQuiz(lang) {
+  var qs = genMixedQuiz(lang, 12);
+  if (!qs.length) return;
+  var name = '全言語';
+  if (lang !== 'all') {
+    var ep0 = EPISODES.filter(function (e) { return e.lang === lang; })[0];
+    if (ep0) name = ep0.langName;
+  }
+  quiz = {
+    title: name + ' ミックス復習',
+    kind: 'mixed', lang: lang, epId: null, questions: qs, idx: 0, correctCount: 0,
+    answered: false, picked: [], perQ: []
+  };
+  showQuiz();
+}
+/* 言語ごとの件数（キューのボタン表示用） */
+function langDueCounts(lang, today) {
+  var dueEps = 0, weakLines = 0;
+  EPISODES.forEach(function (ep) {
+    if (ep.lang !== lang) return;
+    if (episodeDueKind(ep, today)) dueEps++;
+  });
+  Object.keys(state.lines).forEach(function (key) {
+    var ep = EP_BY_ID[key.split('#')[0]];
+    if (!ep || ep.lang !== lang) return;
+    var ls = state.lines[key];
+    if ((ls.weak || []).some(function (w) { return !w.done && w.d <= today; })) weakLines++;
+  });
+  return { dueEps: dueEps, weakLines: weakLines };
+}
+function mixedSectionHtml(today) {
+  var langs = [];
+  LANG_ORDER.forEach(function (lang) {
+    if (EPISODES.some(function (e) { return e.lang === lang; })) langs.push(lang);
+  });
+  EPISODES.forEach(function (ep) { if (langs.indexOf(ep.lang) < 0) langs.push(ep.lang); });
+  var html = '<div class="qitem">' +
+    '<div class="q-title">言語を選んでミックス復習</div>' +
+    '<div class="q-meta">その言語の本棚ぜんぶから、期日の分・弱い行・「できた」行の確認が混ざって約12問出ます。どの回から出るかは、答えるまで分かりません。</div>';
+  langs.forEach(function (lang) {
+    var ep0 = EPISODES.filter(function (e) { return e.lang === lang; })[0];
+    var c = langDueCounts(lang, today);
+    html += '<div class="q-actions"><button type="button" class="quiz-btn" data-act="quiz-mixed" data-lang="' +
+      esc(lang) + '">' + esc(ep0.langName) + '（期日 ' + c.dueEps + ' 回／弱い行 ' + c.weakLines + ' 件）</button></div>';
+  });
+  html += '<div class="q-actions"><button type="button" class="quiz-btn" data-act="quiz-mixed" data-lang="all">全言語ミックス</button></div></div>';
+  return html;
+}
+
+/* ---------- v4：入力形式の回答 ---------- */
+function answerTyped() {
+  if (!quiz || quiz.answered) return;
+  var q = quiz.questions[quiz.idx];
+  if (q.type !== 'type') return;
+  var input = document.getElementById('type-input');
+  var val = input ? input.value : '';
+  var g = gradeTyped(val, q.word, EP_BY_ID[q.epId].lang);
+  if (g.result === 'empty') { if (input) input.focus(); return; }
+  var isCorrect = (g.result === 'exact' || g.result === 'close');
+  gradeCurrent(isCorrect);
+  if (input) input.disabled = true;
+  document.getElementById('quiz-feedback').innerHTML =
+    feedbackHtml(isCorrect, q, { close: g.result === 'close', yours: val });
+}
+function answerGiveUp() {
+  if (!quiz || quiz.answered) return;
+  var q = quiz.questions[quiz.idx];
+  if (q.type !== 'type') return;
+  gradeCurrent(false);
+  var input = document.getElementById('type-input');
+  if (input) input.disabled = true;
+  document.getElementById('quiz-feedback').innerHTML = feedbackHtml(false, q);
+}
+
+/* ---------- v4：ペア合わせ ---------- */
+var matchGame = null; // {epId, pairs, left, right, matched, mistakes, selL, selR, wrongL, wrongR}
+function genMatching(ep, n) {
+  n = n || 6;
+  var seenT = {}, seenJ = {}, cand = [];
+  ep.lines.forEach(function (ln, idx) {
+    if (!ln.ja) return;
+    var kt = normalizeAnswer(ln.text, ep.lang);
+    var kj = normalizeAnswer(ln.ja, 'ja');
+    if (!kt || !kj || seenT[kt] || seenJ[kj]) return;
+    seenT[kt] = 1; seenJ[kj] = 1;
+    cand.push({ lineIdx: idx, text: ln.text, ja: ln.ja });
+  });
+  cand = shuffle(cand).slice(0, n);
+  if (cand.length < 3) return null;
+  return cand;
+}
+function startMatching(epId) {
+  var ep = EP_BY_ID[epId];
+  if (!ep) return;
+  var pairs = genMatching(ep);
+  if (!pairs) return;
+  matchGame = {
+    epId: epId, pairs: pairs,
+    left: shuffle(pairs.map(function (p) { return p.lineIdx; })),
+    right: shuffle(pairs.map(function (p) { return p.lineIdx; })),
+    matched: {}, mistakes: 0, selL: null, selR: null, wrongL: null, wrongR: null
+  };
+  quiz = null;
+  showMatch();
+}
+function showMatch() {
+  stopSpeak();
+  ['queue', 'shelf', 'phrases'].forEach(function (t) {
+    document.getElementById('view-' + t).hidden = true;
+  });
+  document.getElementById('view-quiz').hidden = false;
+  document.querySelectorAll('.tabbar .tab').forEach(function (b) {
+    b.classList.toggle('active', b.getAttribute('data-tab') === 'shelf');
+  });
+  window.scrollTo(0, 0);
+  renderMatch();
+}
+function renderMatch() {
+  var box = document.getElementById('quiz-box');
+  if (!matchGame) { box.innerHTML = ''; return; }
+  var ep = EP_BY_ID[matchGame.epId];
+  var doneCount = Object.keys(matchGame.matched).length;
+  if (doneCount >= matchGame.pairs.length) { renderMatchSummary(box); return; }
+  var byIdx = {};
+  matchGame.pairs.forEach(function (p) { byIdx[p.lineIdx] = p; });
+  var html = '<div class="quiz-head"><span>ペア合わせ ' + doneCount + ' / ' + matchGame.pairs.length + '</span>' +
+    '<span>ミス ' + matchGame.mistakes + '</span>' +
+    '<button type="button" class="quiz-quit" data-act="quiz-done">やめる</button></div>' +
+    '<div class="quiz-title">' + esc(ep.langName) + '「' + esc(ep.title) + '」</div>' +
+    '<div class="q-kind">文と意味のペアをタップで合わせてください</div>' +
+    '<div class="match-cols"><div class="match-col">';
+  matchGame.left.forEach(function (idx) {
+    var cls = 'match-btn';
+    if (matchGame.matched[idx]) cls += ' matched';
+    else if (matchGame.selL === idx) cls += ' selected';
+    else if (matchGame.wrongL === idx) cls += ' wrong';
+    html += '<button type="button" class="' + cls + '" data-act="match-left" data-idx="' + idx + '"' +
+      (matchGame.matched[idx] ? ' disabled' : '') + '><span dir="auto">' + esc(byIdx[idx].text) + '</span></button>';
+  });
+  html += '</div><div class="match-col">';
+  matchGame.right.forEach(function (idx) {
+    var cls = 'match-btn';
+    if (matchGame.matched[idx]) cls += ' matched';
+    else if (matchGame.selR === idx) cls += ' selected';
+    else if (matchGame.wrongR === idx) cls += ' wrong';
+    html += '<button type="button" class="' + cls + '" data-act="match-right" data-idx="' + idx + '"' +
+      (matchGame.matched[idx] ? ' disabled' : '') + '>' + esc(byIdx[idx].ja) + '</button>';
+  });
+  html += '</div></div>';
+  box.innerHTML = html;
+}
+function matchPick(side, idx) {
+  if (!matchGame || matchGame.matched[idx]) return;
+  matchGame.wrongL = null; matchGame.wrongR = null;
+  if (side === 'L') matchGame.selL = idx; else matchGame.selR = idx;
+  if (matchGame.selL !== null && matchGame.selR !== null) {
+    if (matchGame.selL === matchGame.selR) {
+      matchGame.matched[matchGame.selL] = true;
+      /* 合ったペアの行は、4択の正解と同じく「できた」側へ進める */
+      applyLineMark(matchGame.epId, matchGame.selL, 'ok', null);
+    } else {
+      /* 外したペアはミス回数だけ数える（行を「まだ」にはしない） */
+      matchGame.mistakes++;
+      matchGame.wrongL = matchGame.selL;
+      matchGame.wrongR = matchGame.selR;
+    }
+    matchGame.selL = null; matchGame.selR = null;
+  }
+  renderMatch();
+}
+function renderMatchSummary(box) {
+  var ep = EP_BY_ID[matchGame.epId];
+  var html = '<div class="card"><h3>ペア合わせ結果</h3>' +
+    '<p class="quiz-score">' + matchGame.pairs.length + ' ペア完成</p>' +
+    '<p>ミスは ' + matchGame.mistakes + ' 回でした。合わせられた行は「できた」で記録しました。</p>' +
+    '<p class="hint">' + esc(ep.langName) + '「' + esc(ep.title) + '」</p>' +
+    '<div class="q-actions"><button type="button" class="quiz-btn" data-act="quiz-done">戻る</button></div></div>';
+  box.innerHTML = html;
+}
+
 /* ---------- 画面切り替え ---------- */
 function switchTab(name) {
   stopSpeak();
+  hideGlossPop();
   ['queue', 'shelf', 'phrases', 'quiz'].forEach(function (t) {
     document.getElementById('view-' + t).hidden = (t !== name);
   });
@@ -742,6 +1339,7 @@ document.addEventListener('click', function (ev) {
   var tabBtn = ev.target.closest ? ev.target.closest('[data-tab]') : null;
   if (tabBtn) {
     if (quiz) { quiz = null; }
+    matchGame = null;
     switchTab(tabBtn.getAttribute('data-tab'));
     renderAll();
     return;
@@ -768,6 +1366,8 @@ document.addEventListener('click', function (ev) {
     startEpisodeQuiz(el.getAttribute('data-ep'), el.getAttribute('data-kind') || 'free');
   } else if (act === 'quiz-weak') {
     startLineQuiz(el.getAttribute('data-ep'), Number(el.getAttribute('data-idx')));
+  } else if (act === 'gloss') {
+    /* グロスのポップオーバーは pointer イベント側で処理する */
   } else if (act === 'quiz-answer') {
     answerChoice(Number(el.getAttribute('data-i')));
   } else if (act === 'quiz-listen') {
@@ -782,14 +1382,41 @@ document.addEventListener('click', function (ev) {
     if (quiz && !quiz.answered) { quiz.picked.splice(Number(el.getAttribute('data-pos')), 1); renderOrderChips(); }
   } else if (act === 'quiz-order-check') {
     answerOrder();
+  } else if (act === 'quiz-type-check') {
+    answerTyped();
+  } else if (act === 'quiz-giveup') {
+    answerGiveUp();
+  } else if (act === 'quiz-hint') {
+    var hintEl = document.getElementById('type-hint');
+    if (hintEl) {
+      hintEl.hidden = !hintEl.hidden;
+      el.textContent = hintEl.hidden ? '意味のヒントを見る' : 'ヒントを隠す';
+    }
+  } else if (act === 'quiz-mixed') {
+    startMixedQuiz(el.getAttribute('data-lang'));
+  } else if (act === 'quiz-match') {
+    startMatching(el.getAttribute('data-ep'));
+  } else if (act === 'match-left') {
+    matchPick('L', Number(el.getAttribute('data-idx')));
+  } else if (act === 'match-right') {
+    matchPick('R', Number(el.getAttribute('data-idx')));
   } else if (act === 'quiz-next') {
     quiz.idx++;
     quiz.answered = false;
     quiz.picked = [];
     quiz.shuffledTokens = null;
+    quiz.tiles = null;
     renderQuiz();
   } else if (act === 'quiz-done' || act === 'quiz-quit') {
     closeQuiz();
+  }
+});
+
+/* 入力形式で Enter を押したら答え合わせ */
+document.addEventListener('keydown', function (ev) {
+  if (ev.key === 'Enter' && ev.target && ev.target.id === 'type-input') {
+    ev.preventDefault();
+    answerTyped();
   }
 });
 

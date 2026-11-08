@@ -1,5 +1,5 @@
 /* 語学の見直しアプリ（公開版）：アプリの外枠をキャッシュして、オフラインでも開けるようにする */
-var CACHE_NAME = 'lr-pwa-pub-v2';
+var CACHE_NAME = 'lr-pwa-pub-v3';
 var APP_SHELL = [
   './',
   './index.html',
