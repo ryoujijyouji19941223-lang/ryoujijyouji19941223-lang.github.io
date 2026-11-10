@@ -53,6 +53,7 @@ main {
   margin-bottom: 6px;
 }
 .reason.weak { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+.reason.tail { background: #fdf4ff; border-color: #f0abfc; color: #86198f; }
 .q-title { font-weight: 700; font-size: 15px; }
 .q-text { font-size: 16px; line-height: 1.6; margin: 4px 0; }
 .q-ja { color: var(--sub); font-size: 14px; }
@@ -80,6 +81,7 @@ button.mada:active { background: #fffbeb; }
 .badge.ok { color: var(--ok); border-color: var(--ok); }
 .badge.mada { color: var(--mada); border-color: var(--mada); }
 .badge.done { color: var(--teal-dark); border-color: var(--teal); }
+.badge.grad { color: #b45309; border-color: #d97706; background: #fffbeb; }
 .lang-head { font-size: 16px; margin: 16px 0 8px; }
 .ep-row { cursor: pointer; width: 100%; text-align: left; font: inherit; }
 .ep-row .ep-title { font-weight: 700; font-size: 15px; }

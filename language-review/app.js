@@ -1,6 +1,6 @@
 'use strict';
 /*
- * 語学の見直しアプリ v4
+ * 語学の見直しアプリ v5
  *
  * 本筋は「自動クイズ＋自動採点」。エピソードの行から問題を自動で作る：
  *   意味当て（外国語の文→日本語の意味を4択）／逆向き（日本語→外国語の文を4択）／
@@ -12,6 +12,14 @@
  *   入力形式は言語ごとに表記ゆれをならして採点し、1文字違いまで「惜しい正解」。
  * 答えるとその場で正解・不正解が出て、採点結果がそのまま復習の記録になる。
  * 「できた／まだ」の自己申告ボタンは、本棚などに補助として残してある。
+ *
+ * v5の要点（2026-11-10、学習法レビューに基づくユーザー承認済み）：
+ *   - 卒業テール：「できた」行に +14日／+30日の確認を予定し、両方できたら「卒業」。
+ *     途中で「まだ」になったらテールは白紙に戻り、弱い行フローへ戻る。
+ *   - ミックス復習の類似度ルール：全言語ミックスではロマンス語群
+ *     （イタリア語・フランス語・ポルトガル語・ラテン語）から1言語だけ、登場言語は最大5つ。
+ *   - 聞いて打つ（ディクテーション）形式を用意したが、行ごとの音声区間データが
+ *     無いため DICTATION_ENABLED=false で無効化してある（理由は同変数のコメント参照）。
  *
  * 復習の背骨は「ユーザーのリズム」（v2から不変）：
  *   - おさらい = 配信の3日後
@@ -114,6 +122,21 @@ function buildQueue(today) {
   });
   weakItems.sort(function (a, b) { return a.due < b.due ? -1 : 1; });
 
+  /* v5：卒業テール（弱い行の早出しの次、回の期日分より先に出す小さな区分） */
+  var tailItems = [];
+  Object.keys(state.lines).forEach(function (key) {
+    var td = tailDue(state.lines[key], today);
+    if (!td) return;
+    var parts = key.split('#');
+    var ep = EP_BY_ID[parts[0]];
+    if (!ep) return;
+    tailItems.push({
+      kind: 'tail', epId: ep.id, lineIdx: Number(parts[1]), due: td.d, tailDate: td.d, stage: td.stage,
+      reason: td.stage === 14 ? '卒業チェック（14日後）' : '卒業チェック（30日後・最終）'
+    });
+  });
+  tailItems.sort(function (a, b) { return a.due < b.due ? -1 : 1; });
+
   EPISODES.forEach(function (ep) {
     var es = state.eps[ep.id] || {};
     var rD = recapDue(ep);
@@ -127,7 +150,7 @@ function buildQueue(today) {
     }
   });
   mainItems.sort(function (a, b) { return a.due < b.due ? -1 : 1; });
-  return weakItems.concat(mainItems);
+  return weakItems.concat(tailItems, mainItems);
 }
 
 function nextDueLabel(today) {
@@ -149,6 +172,15 @@ function nextDueLabel(today) {
       }
     });
   });
+  Object.keys(state.lines).forEach(function (key) {
+    var ls = state.lines[key];
+    if (!ls || !ls.tail || ls.graduated) return;
+    var d = !ls.tail.passed14 ? ls.tail.d14 : (!ls.tail.passed30 ? ls.tail.d30 : null);
+    if (d && d > today && (!best || d < best.d)) {
+      var ep2 = EP_BY_ID[key.split('#')[0]];
+      if (ep2) best = { d: d, what: '卒業チェック', ep: ep2 };
+    }
+  });
   if (!best) return '';
   return '次は ' + fmtFull(best.d) + '：' + best.ep.langName + '「' + best.ep.title + '」の' + best.what + 'です。';
 }
@@ -162,6 +194,25 @@ function applyEpisodeMark(kind, epId, result) {
 function markEpisode(kind, epId, result) {
   applyEpisodeMark(kind, epId, result);
   renderAll();
+}
+
+/* ---------- v5：卒業テール ----------
+ * 「できた」になった行は、+14日と+30日に確認（テールチェック）を予定する。
+ * 両方できたら「卒業」：以後は「できた」行の抜き打ち（スポットチェック）枠でのみ出る。
+ * 途中で一度でも「まだ」になったらテールは白紙に戻り、弱い行フロー（+1日/+3日）へ戻る。
+ * 行の記録への追加フィールド（すべて任意・v4以前の保存データには無いので、
+ * 無い場合は「テール未予定・未卒業」として扱い、保存データは消さない）：
+ *   tail: { base, d14, passed14, d30, passed30 } / graduated: true / graduatedDate */
+function scheduleTail(ls, t) {
+  if (ls.graduated || ls.tail) return;
+  ls.tail = { base: t, d14: addDays(t, 14), passed14: false, d30: addDays(t, 30), passed30: false };
+}
+/* 期日が来ているテール段階。無ければ null。buildQueue と classifyLangLines が使う */
+function tailDue(ls, today) {
+  if (!ls || !ls.tail || ls.graduated) return null;
+  if (!ls.tail.passed14 && ls.tail.d14 <= today) return { stage: 14, d: ls.tail.d14 };
+  if (ls.tail.passed14 && !ls.tail.passed30 && ls.tail.d30 <= today) return { stage: 30, d: ls.tail.d30 };
+  return null;
 }
 
 function applyLineMark(epId, idx, result, weakDate) {
@@ -186,6 +237,24 @@ function applyLineMark(epId, idx, result, weakDate) {
       var exists = ls.weak.some(function (w) { return w.d === d && !w.done; });
       if (!exists) ls.weak.push({ d: d, done: false });
     });
+  }
+  if (result === 'ok') {
+    /* 卒業テール：期日が来た段階を消化し、テールが無ければ（再）予定する */
+    if (ls.tail) {
+      if (!ls.tail.passed14 && ls.tail.d14 <= t) ls.tail.passed14 = true;
+      else if (ls.tail.passed14 && !ls.tail.passed30 && ls.tail.d30 <= t) ls.tail.passed30 = true;
+      if (ls.tail.passed14 && ls.tail.passed30) {
+        ls.graduated = true;
+        ls.graduatedDate = t;
+        ls.tail = null;
+      }
+    }
+    scheduleTail(ls, t);
+  }
+  if (result === 'mada') {
+    /* 「まだ」になったらテールは白紙に戻す。卒業済みも取り消して弱い行フローへ */
+    ls.tail = null;
+    ls.graduated = false;
   }
   saveState();
 }
@@ -216,6 +285,61 @@ function speakText(text, lang) {
 }
 function stopSpeak() {
   try { if ('speechSynthesis' in window) speechSynthesis.cancel(); } catch (e) { /* 何もしない */ }
+  stopDictation();
+}
+
+/* ---------- v5：聞いて打つ（ディクテーション） ----------
+ * 形式そのもの（出題・区間再生・採点・記録）は実装済みだが、現在のデータでは
+ * 行ごとの音声区間（その行が ep.audio の何秒〜何秒か）が存在しないため、
+ * 下のフラグで無効化してある。端末の音声合成（speakText）での代用はしない
+ * （モデルの発音が違うと、間違った音を覚えてしまうため）。
+ *
+ * 有効化に必要なデータ：エピソードごとに、行 index と対応する
+ * {start, end}（秒）の配列。置き場所は data.js の ep.timing（推奨）か各行の t0/t1。
+ * lineTiming() が両形式を読む。
+ * データが無い理由：render_episode_v2.py は行ごとのクリップを（行の後に0.35秒の
+ * 間を挟み、PAUSE行は指定秒の無音）連結して1本の音声を作るが、区間表を
+ * 書き出していない。作業フォルダの line_NN.wav キャッシュもワークスペースに
+ * 残っていないため、既存エピソードの区間を正確には復元できない
+ * （無音検出での推定は、文中の間や分割時の0.15秒の間と混ざって誤差が大きく、使わない）。
+ * レンダーに区間表（JSON）の出力を足せば今後のエピソードから有効化でき、
+ * その時は DICTATION_ENABLED を true に変えるだけでよい。 */
+var DICTATION_ENABLED = false;
+var dictAudio = null;
+var dictTimer = null;
+function lineTiming(ep, idx) {
+  var ln = ep.lines[idx];
+  if (!ln) return null;
+  if (typeof ln.t0 === 'number' && typeof ln.t1 === 'number' && ln.t1 > ln.t0) {
+    return { start: ln.t0, end: ln.t1 };
+  }
+  if (Array.isArray(ep.timing) && ep.timing[idx] &&
+      typeof ep.timing[idx].start === 'number' && typeof ep.timing[idx].end === 'number' &&
+      ep.timing[idx].end > ep.timing[idx].start) {
+    return { start: ep.timing[idx].start, end: ep.timing[idx].end };
+  }
+  return null;
+}
+function playDictation(q) {
+  var ep = EP_BY_ID[q.epId];
+  if (!ep || !ep.audio || q.start == null || q.end == null) return;
+  try {
+    stopSpeak();
+    if (!dictAudio) dictAudio = new Audio();
+    try { dictAudio.pause(); } catch (e) { /* 初回は止める物が無い */ }
+    dictAudio.src = ep.audio;
+    dictAudio.currentTime = q.start;
+    var pr = dictAudio.play();
+    if (pr && pr.catch) pr.catch(function () { /* 再生できなくても画面は続く */ });
+    if (dictTimer) clearTimeout(dictTimer);
+    dictTimer = setTimeout(function () {
+      if (dictAudio) { try { dictAudio.pause(); } catch (e) { /* 何もしない */ } }
+    }, Math.max(0, (q.end - q.start)) * 1000 + 300);
+  } catch (e) { /* 音が出なくても画面は続く */ }
+}
+function stopDictation() {
+  if (dictTimer) { clearTimeout(dictTimer); dictTimer = null; }
+  if (dictAudio) { try { dictAudio.pause(); } catch (e) { /* 何もしない */ } }
 }
 
 /* ---------- クイズ生成 ---------- */
@@ -357,7 +481,7 @@ function wordTiers(ep, ln) {
   return { tiers: [same, other], excludeKeys: excludeKeys };
 }
 
-var QUIZ_FORMATS = ['meaning', 'reverse', 'fill', 'type', 'order', 'listening'];
+var QUIZ_FORMATS = ['meaning', 'reverse', 'fill', 'type', 'order', 'listening', 'dictation'];
 /* 穴埋め（4択）と入力形式で共用する、隠す語と文の決定 */
 function pickClozeTarget(ep, idx) {
   var ln = ep.lines[idx];
@@ -393,6 +517,13 @@ function makeQuestion(ep, idx, format) {
     var qf = pickDistractors(ep, ct.word, wt.tiers, { minR: 0.5, maxR: 2.0, excludeKeys: wt.excludeKeys });
     if (!qf) return null;
     return { type: 'fill', epId: ep.id, lineIdx: idx, sentence: ct.sentence, word: ct.word, ja: ln.ja || '', options: qf.options, correct: qf.correct };
+  }
+  if (format === 'dictation') {
+    /* 聞いて打つ：行の音声区間がデータに無いため、通常は作れない（DICTATION_ENABLED のコメント参照） */
+    if (!DICTATION_ENABLED) return null;
+    var tm = lineTiming(ep, idx);
+    if (!ep.audio || !tm) return null;
+    return { type: 'dictation', epId: ep.id, lineIdx: idx, text: ln.text, ja: ln.ja || '', start: tm.start, end: tm.end };
   }
   if (format === 'order') {
     var toks = splitTokens(ln.text);
@@ -450,7 +581,7 @@ function countAnswerTiles(tiles, pickedIdxs) {
 /* ---------- v4：セッションの弧 ---------- */
 /* 段階：0=見て分かる（意味当て・逆向き・聞き取り）→ 1=穴埋め4択 → 2=作る（入力・並べ替え）。
  * 段階の中は行を散らして、同じ行の問題が背中合わせにならないようにする。 */
-var FORMAT_PHASE = { meaning: 0, reverse: 0, listening: 0, fill: 1, type: 2, order: 2 };
+var FORMAT_PHASE = { meaning: 0, reverse: 0, listening: 0, fill: 1, type: 2, order: 2, dictation: 2 };
 function interleaveByLine(list, prevLineIdx) {
   var groups = {}, order = [];
   list.forEach(function (q) {
@@ -498,7 +629,7 @@ function genEpisodeQuiz(ep, targetLen) {
       if (q) candByPhase[FORMAT_PHASE[f]].push(q);
     });
   });
-  function selectFrom(cands, already, perFormatCap, perLineCap) {
+  function selectFrom(cands, already, perFormatCap, perLineCap, limit) {
     var perFormat = {}, perLine = {}, chosen = [];
     already.forEach(function (q) {
       perFormat[q.type] = (perFormat[q.type] || 0) + 1;
@@ -506,6 +637,7 @@ function genEpisodeQuiz(ep, targetLen) {
     });
     shuffle(cands).forEach(function (q) {
       if (already.length + chosen.length >= targetLen) return;
+      if (chosen.length >= limit) return;
       if ((perFormat[q.type] || 0) >= perFormatCap) return;
       if ((perLine[q.lineIdx] || 0) >= perLineCap) return;
       perFormat[q.type] = (perFormat[q.type] || 0) + 1;
@@ -514,15 +646,17 @@ function genEpisodeQuiz(ep, targetLen) {
     });
     return chosen;
   }
+  /* 段階ごとに枠を確保する（前段だけで枠が埋まると、入力形式まで回らないため） */
+  var phaseLimits = [4, 3, targetLen];
   var pickedSoFar = [];
   var ph;
   for (ph = 0; ph < 3; ph++) {
-    pickedSoFar = pickedSoFar.concat(selectFrom(candByPhase[ph], pickedSoFar, 3, 2));
+    pickedSoFar = pickedSoFar.concat(selectFrom(candByPhase[ph], pickedSoFar, 3, 2, phaseLimits[ph]));
   }
   for (ph = 0; ph < 3; ph++) {
     if (pickedSoFar.length >= targetLen) break;
     var rest = candByPhase[ph].filter(function (q) { return pickedSoFar.indexOf(q) < 0; });
-    pickedSoFar = pickedSoFar.concat(selectFrom(rest, pickedSoFar, 99, 3));
+    pickedSoFar = pickedSoFar.concat(selectFrom(rest, pickedSoFar, 99, 3, targetLen));
   }
   return arrangeArc(pickedSoFar).slice(0, targetLen);
 }
@@ -567,9 +701,12 @@ function esc(s) {
     .replace(/"/g, '&quot;');
 }
 function statusBadge(ls) {
-  if (ls.status === 'ok') return '<span class="badge ok">できた</span>';
-  if (ls.status === 'mada') return '<span class="badge mada">まだ</span>';
-  return '<span class="badge">未記録</span>';
+  var h;
+  if (ls.status === 'ok') h = '<span class="badge ok">できた</span>';
+  else if (ls.status === 'mada') h = '<span class="badge mada">まだ</span>';
+  else h = '<span class="badge">未記録</span>';
+  if (ls.graduated) h += ' <span class="badge grad">🎓卒業</span>';
+  return h;
 }
 function markButtons(act, attrs) {
   return '<div class="mark-btns">' +
@@ -703,6 +840,16 @@ function renderQueue() {
           esc(it.epId) + '" data-idx="' + it.lineIdx + '">クイズで復習</button></div>' +
         '<div class="q-meta">自分で言えたかチェックしたい時は、こちらでも記録できます。</div>' +
         markButtons('line-mark', 'data-ep="' + esc(it.epId) + '" data-idx="' + it.lineIdx + '" data-weak="' + esc(it.weakDate) + '"') +
+        '</div>';
+    } else if (it.kind === 'tail') {
+      html += '<div class="qitem">' +
+        '<span class="reason tail">' + esc(it.reason) + '（' + fmtFull(it.tailDate) + 'の分）</span>' +
+        '<div class="q-title">' + esc(ep.langName) + '「' + esc(ep.title) + '」</div>' +
+        '<div class="q-text">' + lineTextHtml(ep, it.lineIdx) + '</div>' +
+        '<div class="q-actions"><button type="button" class="quiz-btn" data-act="quiz-weak" data-ep="' +
+          esc(it.epId) + '" data-idx="' + it.lineIdx + '">クイズで復習</button></div>' +
+        '<div class="q-meta">「できた」から' + (it.stage === 14 ? '14日' : '30日') + 'の確認です。できれば卒業に近づきます。自分で言えたかチェックしたい時は、こちらでも記録できます。</div>' +
+        markButtons('line-mark', 'data-ep="' + esc(it.epId) + '" data-idx="' + it.lineIdx + '"') +
         '</div>';
     } else {
       var dueText = it.kind === 'prep'
@@ -903,6 +1050,14 @@ function renderQuiz() {
         '<div class="q-ja" id="type-hint" hidden>意味：' + esc(q.ja) + '</div>' : '') +
       '<div class="q-actions"><button type="button" class="quiz-btn" data-act="quiz-type-check">答える</button></div>' +
       '<div class="q-actions"><button type="button" class="back-btn" data-act="quiz-giveup">分からない（答えを見る）</button></div>';
+  } else if (q.type === 'dictation') {
+    html += '<div class="q-kind">聞いて打つ：音声を聞いて、聞こえた文をそのまま打ってください</div>' +
+      '<div class="q-actions"><button type="button" class="quiz-btn" data-act="quiz-dict-play">🔊 聞く</button></div>' +
+      '<input type="text" id="dict-input" class="type-input" dir="auto" lang="' + esc(ep.lang) + '" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="聞こえた文をここに打つ">' +
+      (q.ja ? '<div class="q-actions"><button type="button" class="back-btn" data-act="quiz-hint">意味のヒントを見る</button></div>' +
+        '<div class="q-ja" id="type-hint" hidden>意味：' + esc(q.ja) + '</div>' : '') +
+      '<div class="q-actions"><button type="button" class="quiz-btn" data-act="quiz-dict-check">答える</button></div>' +
+      '<div class="q-actions"><button type="button" class="back-btn" data-act="quiz-dict-giveup">分からない（答えを見る）</button></div>';
   } else if (q.type === 'order') {
     html += '<div class="q-kind">並べ替え：言葉を正しい順にタップしてください（余分な言葉が混ざっています。全部使う必要はありません）</div>' +
       (q.ja ? '<div class="q-prompt">' + esc(q.ja) + '</div>' : '') +
@@ -950,7 +1105,7 @@ function gradeCurrent(isCorrect) {
   applyLineMark(q.epId, q.lineIdx, isCorrect ? 'ok' : 'mada', null);
   if (isCorrect) {
     quiz.correctCount++;
-    if (q.type === 'type') {
+    if (q.type === 'type' || q.type === 'dictation') {
       var ls = lineState(lineKey(q.epId, q.lineIdx));
       ls.typedOk = (ls.typedOk || 0) + 1;
       saveState();
@@ -963,9 +1118,21 @@ function gradeCurrent(isCorrect) {
 function correctAnswerText(q) {
   if (q.type === 'meaning' || q.type === 'reverse' || q.type === 'listening') return q.options[q.correct];
   if (q.type === 'fill' || q.type === 'type') return q.word;
+  if (q.type === 'dictation') return q.text;
   if (q.type === 'order') {
     var ep = EP_BY_ID[q.epId];
     return ep.lines[q.lineIdx].text;
+  }
+  return '';
+}
+/* v5：卒業テール／卒業の進み具合をフィードバックに添える（採点直後の状態を見る） */
+function tailNote(q) {
+  var ls = peekLine(lineKey(q.epId, q.lineIdx));
+  if (ls.graduated) return ' 🎓 この行は卒業しました！';
+  if (ls.tail) {
+    return ls.tail.passed14
+      ? ' 卒業チェック 1/2 通過（残りは30日後の確認です）。'
+      : ' 卒業チェックは14日後と30日後にあります。';
   }
   return '';
 }
@@ -977,7 +1144,7 @@ function feedbackHtml(isCorrect, q, opts) {
   var html = '<div class="feedback ' + (isCorrect ? 'good' : 'bad') + '">';
   if (opts.close) {
     html += '<div class="fb-msg">惜しい！正解として記録します</div>' +
-      '<div class="fb-answer">正しいつづり：<span dir="auto">' + esc(q.word) + '</span></div>' +
+      '<div class="fb-answer">正しいつづり：<span dir="auto">' + esc(q.word || q.text) + '</span></div>' +
       (opts.yours ? '<div class="q-meta">あなたの入力：<span dir="auto">' + esc(opts.yours) + '</span></div>' : '');
   } else {
     html += '<div class="fb-msg">' + (isCorrect ? '正解！' : '残念。') + '</div>' +
@@ -989,7 +1156,7 @@ function feedbackHtml(isCorrect, q, opts) {
     (quiz && quiz.kind === 'mixed'
       ? '<div class="q-meta">この行は ' + esc(ep.langName) + '「' + esc(ep.title) + '」から出ました。</div>' : '') +
     '<div class="q-meta">' + (isCorrect
-      ? 'この行は「できた」で記録しました。' + (q.type === 'type' ? '（入力形式で言えたので2倍の進みです）' : '')
+      ? 'この行は「できた」で記録しました。' + ((q.type === 'type' || q.type === 'dictation') ? '（入力形式で言えたので2倍の進みです）' : '') + tailNote(q)
       : 'この行は「まだ」で記録しました。明日と3日後に、弱い行として先に出ます。') + '</div>' +
     '<div class="q-actions"><button type="button" class="quiz-btn" data-act="quiz-next">' +
     (quiz.idx + 1 >= quiz.questions.length ? '結果を見る' : '次へ') + '</button></div></div>';
@@ -1077,7 +1244,7 @@ function episodeDueKind(ep, today) {
   if (es.recap && !es.test && testDue(ep) <= today) return 'test';
   return null;
 }
-/* 行のプール分け：期日の分（期日が来た回の行＋弱い行の早出し分）／できた行／その他の行。
+/* 行のプール分け：期日の分（期日が来た回の行＋弱い行の早出し分＋卒業チェック分）／できた行／その他の行。
  * 1行は1つのプールにだけ入る（優先順位：期日＞できた＞その他）。 */
 function classifyLangLines(lang, today) {
   var pools = { due: [], done: [], other: [] };
@@ -1087,14 +1254,18 @@ function classifyLangLines(lang, today) {
     ep.lines.forEach(function (ln, idx) {
       var ls = peekLine(lineKey(ep.id, idx));
       var weakDue = (ls.weak || []).some(function (w) { return !w.done && w.d <= today; });
+      var tailD = !!tailDue(ls, today);
       var entry = { ep: ep, idx: idx };
-      if (epDue || weakDue) pools.due.push(entry);
+      if (epDue || weakDue || tailD) pools.due.push(entry);
       else if (ls.status === 'ok') pools.done.push(entry);
       else pools.other.push(entry);
     });
   });
   return pools;
 }
+/* v5：ロマンス語群（類似度ルールの対象）と、1セッションに登場する言語の上限 */
+var ROMANCE_LANGS = { it: 1, fr: 1, pt: 1, la: 1 };
+var MAX_SESSION_LANGS = 5;
 /* 混ぜ方の目安：期日の分 約50%／できた行の確認 約30%／その他 約20%。
  * プールが足りない分は、残りのプールから比例的に回して埋める。同じ行は1回だけ。 */
 function genMixedQuiz(lang, targetLen) {
@@ -1108,14 +1279,41 @@ function genMixedQuiz(lang, targetLen) {
   ];
   quotas[2].n = targetLen - quotas[0].n - quotas[1].n;
   quotas.forEach(function (q) { q.pool = shuffle(q.pool); });
+  /* v5：類似度ルール（言語を混ぜるセッション＝lang 'all' の時だけ効く）。
+   * 干渉が一番強いのは似た言語同士なので、ロマンス語群からは1セッションに1言語だけ。
+   * 登場する言語の数も最大5つまでに抑える（1言語あたりの分量が薄くならないように）。
+   * 1言語だけのセッションでは今まで通り（ルールは発動しない）。 */
   var selected = [];
+  var usedLangs = {};
+  var romanceUsed = null;
+  function canPick(entry) {
+    if (lang !== 'all') return true;
+    var L = entry.ep.lang;
+    if (ROMANCE_LANGS[L] && romanceUsed && romanceUsed !== L) return false;
+    if (!usedLangs[L] && Object.keys(usedLangs).length >= MAX_SESSION_LANGS) return false;
+    return true;
+  }
+  function doPick(entry) {
+    usedLangs[entry.ep.lang] = 1;
+    if (ROMANCE_LANGS[entry.ep.lang]) romanceUsed = entry.ep.lang;
+    selected.push(entry);
+  }
   quotas.forEach(function (q) {
-    selected = selected.concat(q.pool.slice(0, q.n));
-    q.pool = q.pool.slice(q.n);
+    var need = q.n;
+    var rest = [];
+    q.pool.forEach(function (entry) {
+      if (need > 0 && canPick(entry)) { doPick(entry); need--; }
+      else rest.push(entry);
+    });
+    q.pool = rest;
   });
   /* 足りない分は残っているプールから（期日→できた→その他の順に）埋める */
   quotas.forEach(function (q) {
-    while (selected.length < targetLen && q.pool.length) selected.push(q.pool.shift());
+    var i = 0;
+    while (selected.length < targetLen && i < q.pool.length) {
+      var entry = q.pool[i++];
+      if (canPick(entry)) doPick(entry);
+    }
   });
   if (!selected.length) return [];
   /* 形式の割り当て：前半は見て分かる形式、中盤は穴埋め、後半は入力／並べ替えを優先。
@@ -1126,7 +1324,7 @@ function genMixedQuiz(lang, targetLen) {
   var questions = [];
   selected.forEach(function (entry, i) {
     var pref = i < n1 ? ['meaning', 'reverse', 'listening']
-      : (i < n1 + n2 ? ['fill'] : ['type', 'order']);
+      : (i < n1 + n2 ? ['fill'] : ['type', 'order', 'dictation']);
     var tries = shuffle(pref).concat(shuffle(QUIZ_FORMATS.filter(function (f) { return pref.indexOf(f) < 0; })));
     for (var k = 0; k < tries.length; k++) {
       var q = makeQuestion(entry.ep, entry.idx, tries[k]);
@@ -1205,6 +1403,31 @@ function answerGiveUp() {
   if (q.type !== 'type') return;
   gradeCurrent(false);
   var input = document.getElementById('type-input');
+  if (input) input.disabled = true;
+  document.getElementById('quiz-feedback').innerHTML = feedbackHtml(false, q);
+}
+
+/* ---------- v5：聞いて打つの回答（文全体を打つ。採点は入力形式と同じ gradeTyped） ---------- */
+function answerDictation() {
+  if (!quiz || quiz.answered) return;
+  var q = quiz.questions[quiz.idx];
+  if (q.type !== 'dictation') return;
+  var input = document.getElementById('dict-input');
+  var val = input ? input.value : '';
+  var g = gradeTyped(val, q.text, EP_BY_ID[q.epId].lang);
+  if (g.result === 'empty') { if (input) input.focus(); return; }
+  var isCorrect = (g.result === 'exact' || g.result === 'close');
+  gradeCurrent(isCorrect);
+  if (input) input.disabled = true;
+  document.getElementById('quiz-feedback').innerHTML =
+    feedbackHtml(isCorrect, q, { close: g.result === 'close', yours: val });
+}
+function answerDictationGiveUp() {
+  if (!quiz || quiz.answered) return;
+  var q = quiz.questions[quiz.idx];
+  if (q.type !== 'dictation') return;
+  gradeCurrent(false);
+  var input = document.getElementById('dict-input');
   if (input) input.disabled = true;
   document.getElementById('quiz-feedback').innerHTML = feedbackHtml(false, q);
 }
@@ -1386,6 +1609,15 @@ document.addEventListener('click', function (ev) {
     answerTyped();
   } else if (act === 'quiz-giveup') {
     answerGiveUp();
+  } else if (act === 'quiz-dict-play') {
+    if (quiz) {
+      var qd = quiz.questions[quiz.idx];
+      if (qd && qd.type === 'dictation') playDictation(qd);
+    }
+  } else if (act === 'quiz-dict-check') {
+    answerDictation();
+  } else if (act === 'quiz-dict-giveup') {
+    answerDictationGiveUp();
   } else if (act === 'quiz-hint') {
     var hintEl = document.getElementById('type-hint');
     if (hintEl) {
@@ -1417,6 +1649,10 @@ document.addEventListener('keydown', function (ev) {
   if (ev.key === 'Enter' && ev.target && ev.target.id === 'type-input') {
     ev.preventDefault();
     answerTyped();
+  }
+  if (ev.key === 'Enter' && ev.target && ev.target.id === 'dict-input') {
+    ev.preventDefault();
+    answerDictation();
   }
 });
 
