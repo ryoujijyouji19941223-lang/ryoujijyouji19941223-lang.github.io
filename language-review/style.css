@@ -215,3 +215,48 @@ button.speak-btn {
 .gp-word { font-weight: 700; font-size: 16px; }
 .gp-reading { font-size: 13px; opacity: .85; }
 .gp-ja { font-size: 14px; }
+
+/* ---------- v7：Duolingo式レッスン ---------- */
+.lsn-btn { background: #4c9a06; }
+.lsn-btn:active { background: #3e7d05; }
+.lsn-top { display: flex; align-items: center; gap: 10px; margin: 6px 0 4px; }
+.lsn-top .quiz-quit {
+  min-height: 36px; padding: 0 12px;
+  border: 1px solid var(--line); background: #fff; border-radius: 8px;
+  font-size: 13px; color: var(--sub); cursor: pointer; white-space: nowrap;
+}
+.lsn-progress {
+  flex: 1; height: 14px; border-radius: 999px;
+  background: #e5e7eb; overflow: hidden;
+}
+.lsn-bar { height: 100%; background: #58a700; border-radius: 999px; transition: width .3s ease; }
+.lsn-count { font-size: 13px; color: var(--sub); white-space: nowrap; }
+.lsn-reading { font-size: 30px; font-weight: 800; text-align: center; margin: 16px 0 18px; letter-spacing: .02em; }
+.lsn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.lsn-grid .opt-btn { text-align: center; font-size: 19px; min-height: 68px; }
+.opt-btn.selected { border-color: var(--teal); background: #ecfdf5; }
+.lsn-sound { display: flex; gap: 14px; justify-content: center; align-items: center; margin: 12px 0 18px; }
+.lsn-play {
+  width: 78px; height: 78px; border-radius: 22px; border: none;
+  background: var(--teal); font-size: 34px; cursor: pointer; color: #fff;
+  box-shadow: 0 3px 0 var(--teal-dark);
+}
+.lsn-play:active { background: var(--teal-dark); box-shadow: none; }
+.lsn-play.slow {
+  width: 56px; height: 56px; border-radius: 16px; font-size: 24px;
+  background: #fff; border: 2px solid var(--teal); box-shadow: none;
+}
+.lsn-ja-prompt { font-size: 19px; line-height: 1.6; margin: 8px 0 12px; }
+.lsn-hints { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+.lsn-hint-chip {
+  font-size: 13px; border: 1px solid var(--line); border-radius: 999px;
+  padding: 3px 10px; background: #fff; color: var(--ink);
+}
+.lsn-foot { margin-top: 16px; }
+.lsn-check {
+  width: 100%; min-height: 58px; font-size: 19px; font-weight: 800; letter-spacing: .12em;
+  color: #fff; background: #58a700; border: none; border-radius: 12px; cursor: pointer;
+  box-shadow: 0 3px 0 #3e7d05;
+}
+.lsn-check:active { box-shadow: none; }
+.lsn-check:disabled { background: #d1d5db; color: #6b7280; cursor: default; box-shadow: none; }

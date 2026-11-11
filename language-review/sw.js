@@ -1,5 +1,5 @@
-/* 語学の見直しアプリ（公開版）：アプリの外枠をキャッシュして、オフラインでも開けるようにする */
-var CACHE_NAME = 'lr-pwa-pub-v6';
+/* 語学の見直しアプリ：アプリの外枠をキャッシュして、オフラインでも開けるようにする */
+var CACHE_NAME = 'lr-pwa-pub-v7';
 var APP_SHELL = [
   './',
   './index.html',
@@ -7,7 +7,8 @@ var APP_SHELL = [
   './data.js',
   './app.js',
   './manifest.webmanifest',
-  './icons/icon.svg'
+  './icons/icon-192.png',
+  './icons/icon-512.png'
 ];
 
 self.addEventListener('install', function (event) {
