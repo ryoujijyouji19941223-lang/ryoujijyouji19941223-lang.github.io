@@ -252,6 +252,15 @@ button.speak-btn {
   font-size: 13px; border: 1px solid var(--line); border-radius: 999px;
   padding: 3px 10px; background: #fff; color: var(--ink);
 }
+.lsn-say { font-size: 22px; font-weight: 700; line-height: 1.6; text-align: center; margin: 6px 0 8px; }
+.lsn-mic-wrap { text-align: center; margin: 14px 0 6px; }
+.lsn-mic {
+  width: 84px; height: 84px; border-radius: 999px; border: none;
+  background: #e0653a; font-size: 38px; cursor: pointer; color: #fff;
+  box-shadow: 0 3px 0 #b34a26;
+}
+.lsn-mic:active { box-shadow: none; }
+.lsn-mic:disabled { background: #f0a58c; cursor: default; }
 .lsn-foot { margin-top: 16px; }
 .lsn-check {
   width: 100%; min-height: 58px; font-size: 19px; font-weight: 800; letter-spacing: .12em;

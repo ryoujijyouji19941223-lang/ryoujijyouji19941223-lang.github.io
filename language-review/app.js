@@ -35,7 +35,10 @@
  *   - Duolingo式レッスンモードを追加。全言語が対象で、形式は5つ：
  *     ペア合わせ（単語⇔読み／読みが無い言語は単語⇔日本語訳）、文字クイズ
  *     （読みを見て正しい綴りを4択。読みのある言語だけ）、聞いて選ぶ、
- *     聞いて並べる、訳して並べる。1問ずつ表示・進捗バー・大きなCHECK・
+ *     聞いて並べる、訳して並べる、声に出す（音声認識が使える環境では照合判定、
+ *     使えない環境では自己申告。1レッスン最大1問）。聞き取り系には通常＋
+ *     ゆっくり（0.6倍）再生。並べ替えタイルは長押しで意味ポップアップ。
+ *     1問ずつ表示・進捗バー・大きなCHECK・
  *     即時フィードバックという作法で、結果は既存の行の記録へ反映する。
  *   - 行が4行未満の回（アラビア語ワンフレーズ）と日本語シリーズ（侍言葉）は
  *     レッスンを組まず、入口で理由を表示する。
@@ -1791,7 +1794,7 @@ function genLessonQuestions(entries) {
     allWords = allWords.concat(epWords(en.ep));
   });
   var useReading = poolUseReading(allWords);
-  var pools = { hear: [], spell: [], horder: [], torder: [] };
+  var pools = { hear: [], spell: [], horder: [], torder: [], speak: [] };
   entries.forEach(function (en) {
     var ln = en.ep.lines[en.idx];
     var h = makeHearQuestion(en.ep, en.idx);
@@ -1805,8 +1808,12 @@ function genLessonQuestions(entries) {
       pools.horder.push({ type: 'horder', epId: en.ep.id, lineIdx: en.idx, tokens: tk, text: ln.text, ja: ln.ja || '' });
       pools.torder.push({ type: 'torder', epId: en.ep.id, lineIdx: en.idx, tokens: tk, text: ln.text, ja: ln.ja || '' });
     }
+    var sayLen = Array.from(ln.text || '').length;
+    if (sayLen >= 4 && sayLen <= 42) {
+      pools.speak.push({ type: 'speak', epId: en.ep.id, lineIdx: en.idx, text: ln.text, ja: ln.ja || '' });
+    }
   });
-  ['hear', 'spell', 'horder', 'torder'].forEach(function (k) { pools[k] = shuffle(pools[k]); });
+  ['hear', 'spell', 'horder', 'torder', 'speak'].forEach(function (k) { pools[k] = shuffle(pools[k]); });
   var questions = [], usage = {};
   function usageKey(q) { return q.epId + '#' + q.lineIdx; }
   function take(q) {
@@ -1819,9 +1826,12 @@ function genLessonQuestions(entries) {
   }
   var pairsQ = makePairsQuestion(entries, allWords, useReading);
   if (pairsQ) take(pairsQ);
-  var rotation = ['hear', 'spell', 'torder', 'hear', 'horder', 'spell', 'torder', 'hear', 'horder', 'torder', 'spell', 'hear'];
+  /* 声に出す問題は1レッスンに最大1問（マイクの手間が大きいため） */
+  function speakRoom() { return !questions.some(function (q) { return q.type === 'speak'; }); }
+  var rotation = ['hear', 'spell', 'speak', 'torder', 'hear', 'horder', 'spell', 'torder', 'hear', 'horder', 'torder', 'spell'];
   rotation.forEach(function (fmt) {
     if (questions.length >= LESSON_LEN) return;
+    if (fmt === 'speak' && !speakRoom()) return;
     var cand = null;
     pools[fmt].forEach(function (q) {
       if (cand) return;
@@ -1832,10 +1842,11 @@ function genLessonQuestions(entries) {
     if (cand) take(cand);
   });
   if (questions.length < LESSON_LEN) {
-    var rest = shuffle(pools.hear.concat(pools.spell, pools.horder, pools.torder));
+    var rest = shuffle(pools.hear.concat(pools.spell, pools.horder, pools.torder, pools.speak));
     rest.forEach(function (q) {
       if (questions.length >= LESSON_LEN) return;
       if (questions.indexOf(q) >= 0) return;
+      if (q.type === 'speak' && !speakRoom()) return;
       if ((usage[usageKey(q)] || 0) >= 3) return;
       take(q);
     });
@@ -1865,18 +1876,122 @@ function lessonPlayLine(ep, idx, slow) {
       try { dictAudio.pause(); } catch (e) { /* 初回は止める物が無い */ }
       dictAudio.src = ep.audio;
       dictAudio.currentTime = tm.start;
-      try { dictAudio.playbackRate = slow ? 0.75 : 1; } catch (e) { /* 変えられなくても続く */ }
+      try { dictAudio.playbackRate = slow ? 0.6 : 1; } catch (e) { /* 変えられなくても続く */ }
       var pr = dictAudio.play();
       if (pr && pr.catch) pr.catch(function () { /* 再生できなくても画面は続く */ });
       if (dictTimer) clearTimeout(dictTimer);
-      var durMs = Math.max(0, (tm.end - tm.start)) * 1000 / (slow ? 0.75 : 1) + 300;
+      var durMs = Math.max(0, (tm.end - tm.start)) * 1000 / (slow ? 0.6 : 1) + 300;
       dictTimer = setTimeout(function () {
         if (dictAudio) { try { dictAudio.pause(); } catch (e) { /* 何もしない */ } }
       }, durMs);
     } catch (e) { /* 音が出なくても画面は続く */ }
     return;
   }
-  speakTextRate(ep.lines[idx].text, ep.lang, slow ? 0.65 : 1);
+  speakTextRate(ep.lines[idx].text, ep.lang, slow ? 0.6 : 1);
+}
+
+/* ---------- 声に出す問題（音声認識 or 自己申告） ---------- */
+function speechRecognitionCtor() {
+  try { return window.SpeechRecognition || window.webkitSpeechRecognition || null; } catch (e) { return null; }
+}
+/* 聞き取り結果と本文の照合：正規化して完全一致、または編集距離で近ければ正解 */
+function speechMatch(target, heard, lang) {
+  var a = normalizeAnswer(target, lang);
+  var b = normalizeAnswer(heard, lang);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  var d = editDistance(a, b);
+  var maxLen = Math.max(a.length, b.length);
+  return maxLen > 0 && (1 - d / maxLen) >= 0.75;
+}
+function startLessonSpeech() {
+  if (!lesson || lesson.answered) return;
+  var q = lesson.questions[lesson.idx];
+  if (!q || q.type !== 'speak') return;
+  var Ctor = speechRecognitionCtor();
+  if (!Ctor) { lesson.srFallback = true; renderLesson(); return; }
+  var ep = EP_BY_ID[q.epId];
+  stopSpeak();
+  try {
+    var rec = new Ctor();
+    rec.lang = LANG_TAGS[ep.lang] || ep.lang || 'en-US';
+    rec.interimResults = false;
+    rec.maxAlternatives = 3;
+    lesson.listening = true;
+    lesson.srError = false;
+    renderLesson();
+    rec.onresult = function (ev) {
+      var alts = [];
+      try {
+        var res = ev.results[0];
+        for (var i = 0; i < res.length; i++) alts.push(res[i].transcript);
+      } catch (e) { /* 読めない場合は下の「聞き取れなかった」扱い */ }
+      if (!lesson) return;
+      lesson.listening = false;
+      if (!alts.length) { lesson.srError = true; renderLesson(); return; }
+      var best = alts[0], okSpeak = false;
+      alts.forEach(function (a) {
+        if (!okSpeak && speechMatch(q.text, a, ep.lang)) { okSpeak = true; best = a; }
+      });
+      lesson.heard = best;
+      lessonGrade(okSpeak);
+      renderLesson();
+    };
+    rec.onerror = function (ev) {
+      if (!lesson) return;
+      lesson.listening = false;
+      if (ev && (ev.error === 'not-allowed' || ev.error === 'service-not-allowed')) {
+        lesson.srFallback = true; /* 許可が無い端末では自己申告に切り替える */
+      } else {
+        lesson.srError = true;
+      }
+      renderLesson();
+    };
+    rec.onend = function () {
+      if (lesson && lesson.listening && !lesson.answered) {
+        lesson.listening = false;
+        renderLesson();
+      }
+    };
+    rec.start();
+  } catch (e) {
+    lesson.listening = false;
+    lesson.srFallback = true;
+    renderLesson();
+  }
+}
+
+/* ---------- タイルの長押しで意味ポップアップ ----------
+ * 並べ替えのタイルは「タップ＝置く／外す」が本動作なので、意味表示は長押し
+ * （400ms以上）に割り当てる。表示は既存の gloss ポップアップをそのまま使う。 */
+var lsnPress = null; // {t, key}
+document.addEventListener('pointerdown', function (ev) {
+  var t = (ev.target && ev.target.closest) ? ev.target.closest('[data-lsnpress]') : null;
+  lsnPress = t ? { t: Date.now(), key: t.getAttribute('data-lsnpress') } : null;
+}, true);
+function lessonTileGloss(q, word) {
+  var ep = EP_BY_ID[q.epId];
+  if (!ep) return null;
+  var ln = ep.lines[q.lineIdx];
+  if (!ln.gloss || !validateGloss(ln.text, ln.gloss)) return null;
+  var found = null;
+  ln.gloss.forEach(function (seg) {
+    if (!found && cleanWord(seg.t || '') === word && (seg.ja || seg.r)) {
+      found = { r: (seg.r || '').trim(), ja: (seg.ja || '').trim() };
+    }
+  });
+  return found;
+}
+/* 長押しだったらポップアップを出して true（タップ動作はしない）。
+ * タイル自身に data-w/data-r/data-ja を持たせてあるので、既存の gloss
+ * ポップアップ表示（showGlossPop）をそのまま流用する。 */
+function lessonTilePressedLong(el, key) {
+  if (!lsnPress || lsnPress.key !== key) return false;
+  if (Date.now() - lsnPress.t < 400) return false;
+  if (!lesson || lesson.answered) return false;
+  if (!el.getAttribute || !el.getAttribute('data-w')) return false;
+  try { showGlossPop(el); } catch (e) { return false; }
+  return true;
 }
 
 /* ---------- レッスンの開始・終了 ---------- */
@@ -1960,11 +2075,12 @@ function renderLesson() {
   if (q.type === 'pairs') html += lessonPairsHtml(q);
   else if (q.type === 'spell') html += lessonChoiceHtml(q, true);
   else if (q.type === 'hear') html += lessonChoiceHtml(q, false);
+  else if (q.type === 'speak') html += lessonSpeakHtml(q);
   else if (q.type === 'horder' || q.type === 'torder') html += lessonOrderHtml(q);
   html += '<div id="lesson-feedback">';
   if (lesson.answered) html += lessonFeedbackHtml(q);
   html += '</div>';
-  if (q.type !== 'pairs' && !lesson.answered) {
+  if (q.type !== 'pairs' && q.type !== 'speak' && !lesson.answered) {
     html += '<div class="lsn-foot"><button type="button" class="lsn-check" data-act="lesson-check"' +
       (lessonReady() ? '' : ' disabled') + '>CHECK</button></div>';
   }
@@ -2000,6 +2116,33 @@ function lessonChoiceHtml(q, isSpell) {
   });
   return html + '</div>';
 }
+function lessonSpeakHtml(q) {
+  var ep = EP_BY_ID[q.epId];
+  var canSR = speechRecognitionCtor() !== null;
+  var html = '<div class="q-kind">声に出そう：お手本を聞いて、真似して言ってください</div>' +
+    lessonSoundBtnsHtml() +
+    '<div class="lsn-say"><span dir="auto">' + lineGlossHtml(ep, q.lineIdx) + '</span></div>';
+  if (q.ja) html += '<div class="ja">' + esc(q.ja) + '</div>';
+  if (!lesson.answered) {
+    if (canSR && !lesson.srFallback) {
+      html += '<div class="lsn-mic-wrap"><button type="button" class="lsn-mic" data-act="lesson-mic"' +
+        (lesson.listening ? ' disabled' : '') + '>🎤</button>' +
+        '<div class="hint">' + (lesson.listening ? '聞き取り中… 大きな声でどうぞ' : 'マイクボタンを押して、上の文を声に出してください') + '</div></div>';
+      if (lesson.srError) {
+        html += '<p class="hint">うまく聞き取れませんでした。もう一度試すか、自己申告に切り替えてください。</p>';
+      }
+      html += '<div class="q-actions"><button type="button" class="back-btn" data-act="lesson-sr-fallback">マイクが使えない・自己申告にする</button></div>';
+    } else {
+      html += '<p class="hint">' + (canSR
+        ? '自己申告モードです。声に出して言えたら「言えた」を押してください。'
+        : 'この端末・ブラウザでは音声認識が使えないため、自己申告で記録します。声に出して言えたら「言えた」を押してください。') + '</p>' +
+        '<div class="q-actions"><button type="button" class="quiz-btn" data-act="lesson-said-yes">言えた</button></div>' +
+        '<div class="q-actions"><button type="button" class="quiz-btn skip" data-act="lesson-said-no">言えなかった</button></div>' +
+        '<div class="q-actions"><button type="button" class="back-btn" data-act="lesson-play">もう一度聞く</button></div>';
+    }
+  }
+  return html;
+}
 function lessonOrderHtml(q) {
   var html = '';
   if (q.type === 'horder') {
@@ -2025,7 +2168,8 @@ function lessonOrderHtml(q) {
     }
   }
   html += '<div class="order-answer" id="lesson-answer"></div>' +
-    '<div class="order-pool" id="lesson-pool"></div>';
+    '<div class="order-pool" id="lesson-pool"></div>' +
+    '<p class="hint">タイルを長押しすると、その単語の意味（読みのある言語では読みも）が見られます。</p>';
   return html;
 }
 function renderLessonTiles() {
@@ -2039,15 +2183,20 @@ function renderLessonTiles() {
   var ansBox = document.getElementById('lesson-answer');
   if (!poolBox || !ansBox) return;
   var dis = lesson.answered ? ' disabled' : '';
+  function glossAttrs(word) {
+    var g = lessonTileGloss(q, word);
+    if (!g) return '';
+    return ' data-w="' + esc(word) + '" data-r="' + esc(g.r) + '" data-ja="' + esc(g.ja) + '"';
+  }
   var poolHtml = '';
   lesson.tiles.forEach(function (tile, i) {
     if (lesson.picked.indexOf(i) >= 0) return;
-    poolHtml += '<button type="button" class="chip" data-act="lesson-chip-pick" data-i="' + i + '"' + dis + '><span dir="auto">' + esc(tile.t) + '</span></button>';
+    poolHtml += '<button type="button" class="chip" data-act="lesson-chip-pick" data-i="' + i + '" data-lsnpress="p' + i + '"' + glossAttrs(tile.t) + dis + '><span dir="auto">' + esc(tile.t) + '</span></button>';
   });
   poolBox.innerHTML = poolHtml || '<span class="hint">全部置きました</span>';
   var ansHtml = '';
   lesson.picked.forEach(function (pi, pos) {
-    ansHtml += '<button type="button" class="chip placed" data-act="lesson-chip-unpick" data-pos="' + pos + '"' + dis + '><span dir="auto">' + esc(lesson.tiles[pi].t) + '</span></button>';
+    ansHtml += '<button type="button" class="chip placed" data-act="lesson-chip-unpick" data-pos="' + pos + '" data-lsnpress="u' + pos + '"' + glossAttrs(lesson.tiles[pi].t) + dis + '><span dir="auto">' + esc(lesson.tiles[pi].t) + '</span></button>';
   });
   ansBox.innerHTML = ansHtml || '<span class="hint">ここに文が組み上がります</span>';
   var chk = document.querySelector ? document.querySelector('#quiz-box .lsn-check') : null;
@@ -2161,6 +2310,12 @@ function lessonFeedbackHtml(q) {
     if (q.type === 'spell') {
       html += '<div class="fb-answer">正解：<span dir="auto">' + esc(q.word) + '</span>（' + esc(q.reading) + '）</div>';
     }
+    if (q.type === 'speak' && lesson.heard) {
+      html += '<div class="fb-answer">聞き取り：<span dir="auto">' + esc(lesson.heard) + '</span></div>';
+    }
+    if (q.type === 'speak' && lesson.selfReport) {
+      html += '<div class="fb-answer">自己申告で記録しました</div>';
+    }
     html += '<div class="fb-line"><span dir="auto">' + lineGlossHtml(ep, q.lineIdx) + '</span> ' +
       '<button type="button" class="speak-btn" data-act="lesson-play" aria-label="正解を聞く">🔊</button>' +
       (ln.ja ? '<div class="ja">' + esc(ln.ja) + '</div>' : '') + '</div>' +
@@ -2182,6 +2337,11 @@ function lessonNext() {
   lesson.tiles = null;
   lesson.hintOn = false;
   lesson.pair = null;
+  lesson.listening = false;
+  lesson.heard = null;
+  lesson.srError = false;
+  lesson.srFallback = false;
+  lesson.selfReport = false;
   stopSpeak();
   renderLesson();
 }
@@ -2312,9 +2472,31 @@ document.addEventListener('click', function (ev) {
       if (lq && lq.epId) lessonPlayLine(EP_BY_ID[lq.epId], lq.lineIdx, act === 'lesson-play-slow');
     }
   } else if (act === 'lesson-chip-pick') {
-    if (lesson && !lesson.answered) { lesson.picked.push(Number(el.getAttribute('data-i'))); renderLessonTiles(); }
+    if (lesson && !lesson.answered) {
+      var pickI = Number(el.getAttribute('data-i'));
+      if (!lessonTilePressedLong(el, 'p' + pickI)) {
+        lesson.picked.push(pickI);
+        renderLessonTiles();
+      }
+    }
   } else if (act === 'lesson-chip-unpick') {
-    if (lesson && !lesson.answered) { lesson.picked.splice(Number(el.getAttribute('data-pos')), 1); renderLessonTiles(); }
+    if (lesson && !lesson.answered) {
+      var unPos = Number(el.getAttribute('data-pos'));
+      if (!lessonTilePressedLong(el, 'u' + unPos)) {
+        lesson.picked.splice(unPos, 1);
+        renderLessonTiles();
+      }
+    }
+  } else if (act === 'lesson-mic') {
+    startLessonSpeech();
+  } else if (act === 'lesson-sr-fallback') {
+    if (lesson) { lesson.srFallback = true; renderLesson(); }
+  } else if (act === 'lesson-said-yes' || act === 'lesson-said-no') {
+    if (lesson && !lesson.answered) {
+      lesson.selfReport = true;
+      lessonGrade(act === 'lesson-said-yes');
+      renderLesson();
+    }
   } else if (act === 'lesson-pair-left') {
     lessonPairPick('L', Number(el.getAttribute('data-i')));
   } else if (act === 'lesson-pair-right') {
