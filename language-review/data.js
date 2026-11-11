@@ -832,7 +832,8 @@ window.LR_DATA = {
       }
      ]
     }
-   ]
+   ],
+   "audio": "https://lang-audio-relay.ryouji-jyouji-1994-1223.workers.dev/f/episodes/fi03.mp3"
   },
   {
    "id": "el02",
@@ -1552,7 +1553,7 @@ window.LR_DATA = {
      ]
     }
    ],
-   "audio": null
+   "audio": "https://lang-audio-relay.ryouji-jyouji-1994-1223.workers.dev/f/episodes/el02.mp3"
   },
   {
    "id": "sv02",
@@ -2316,7 +2317,8 @@ window.LR_DATA = {
       }
      ]
     }
-   ]
+   ],
+   "audio": "https://lang-audio-relay.ryouji-jyouji-1994-1223.workers.dev/f/episodes/sv02.mp3"
   },
   {
    "id": "en04",
@@ -3095,7 +3097,7 @@ window.LR_DATA = {
      ]
     }
    ],
-   "audio": null
+   "audio": "https://lang-audio-relay.ryouji-jyouji-1994-1223.workers.dev/f/episodes/en04.mp3"
   },
   {
    "id": "ko03",
@@ -3866,7 +3868,8 @@ window.LR_DATA = {
       }
      ]
     }
-   ]
+   ],
+   "audio": "https://lang-audio-relay.ryouji-jyouji-1994-1223.workers.dev/f/episodes/ko03.mp3"
   },
   {
    "id": "fr03",
@@ -4731,7 +4734,7 @@ window.LR_DATA = {
      ]
     }
    ],
-   "audio": null
+   "audio": "https://lang-audio-relay.ryouji-jyouji-1994-1223.workers.dev/f/episodes/fr03.mp3"
   },
   {
    "id": "ar01",
@@ -4758,7 +4761,8 @@ window.LR_DATA = {
       }
      ]
     }
-   ]
+   ],
+   "audio": "https://lang-audio-relay.ryouji-jyouji-1994-1223.workers.dev/f/episodes/ar01.mp3"
   },
   {
    "id": "ar02",
@@ -4780,7 +4784,8 @@ window.LR_DATA = {
       }
      ]
     }
-   ]
+   ],
+   "audio": "https://lang-audio-relay.ryouji-jyouji-1994-1223.workers.dev/f/episodes/ar02.mp3"
   },
   {
    "id": "ar03",
@@ -4807,7 +4812,8 @@ window.LR_DATA = {
       }
      ]
     }
-   ]
+   ],
+   "audio": "https://lang-audio-relay.ryouji-jyouji-1994-1223.workers.dev/f/episodes/ar03.mp3"
   },
   {
    "id": "ar04",
@@ -4834,7 +4840,8 @@ window.LR_DATA = {
       }
      ]
     }
-   ]
+   ],
+   "audio": "https://lang-audio-relay.ryouji-jyouji-1994-1223.workers.dev/f/episodes/ar04.mp3"
   },
   {
    "id": "ar05",
@@ -4861,7 +4868,8 @@ window.LR_DATA = {
       }
      ]
     }
-   ]
+   ],
+   "audio": "https://lang-audio-relay.ryouji-jyouji-1994-1223.workers.dev/f/episodes/ar05.mp3"
   },
   {
    "id": "ar06",
@@ -4888,7 +4896,8 @@ window.LR_DATA = {
       }
      ]
     }
-   ]
+   ],
+   "audio": "https://lang-audio-relay.ryouji-jyouji-1994-1223.workers.dev/f/episodes/ar06.mp3"
   },
   {
    "id": "ar07",
@@ -4915,7 +4924,8 @@ window.LR_DATA = {
       }
      ]
     }
-   ]
+   ],
+   "audio": "https://lang-audio-relay.ryouji-jyouji-1994-1223.workers.dev/f/episodes/ar07.mp3"
   },
   {
    "id": "ar08",
@@ -4942,7 +4952,8 @@ window.LR_DATA = {
       }
      ]
     }
-   ]
+   ],
+   "audio": "https://lang-audio-relay.ryouji-jyouji-1994-1223.workers.dev/f/episodes/ar08.mp3"
   },
   {
    "id": "ja01",
@@ -5359,7 +5370,7 @@ window.LR_DATA = {
    "title": "第3回 パン屋で買い物",
    "scene": "パン屋",
    "delivered": "2026-11-08",
-   "audio": null,
+   "audio": "https://lang-audio-relay.ryouji-jyouji-1994-1223.workers.dev/f/episodes/tl03.mp3",
    "lines": [
     {
      "sp": "Ren",
@@ -6210,7 +6221,7 @@ window.LR_DATA = {
    "title": "第5回 パン屋で買い物",
    "scene": "パン屋",
    "delivered": "2026-11-09",
-   "audio": null,
+   "audio": "https://lang-audio-relay.ryouji-jyouji-1994-1223.workers.dev/f/episodes/en05.mp3",
    "lines": [
     {
      "sp": "Ren",
@@ -7664,7 +7675,7 @@ window.LR_DATA = {
    "title": "第4回 森へ行く",
    "scene": "森",
    "delivered": "2026-11-09",
-   "audio": null,
+   "audio": "https://lang-audio-relay.ryouji-jyouji-1994-1223.workers.dev/f/episodes/fi04.mp3",
    "lines": [
     {
      "sp": "Ren",
@@ -8908,7 +8919,7 @@ window.LR_DATA = {
    "title": "第3回 パン屋で買い物",
    "scene": "パン屋",
    "delivered": "2026-11-10",
-   "audio": null,
+   "audio": "https://lang-audio-relay.ryouji-jyouji-1994-1223.workers.dev/f/episodes/el03.mp3",
    "lines": [
     {
      "sp": "Ren",
@@ -10191,7 +10202,7 @@ window.LR_DATA = {
    "title": "第3回 パン屋で買い物",
    "scene": "パン屋",
    "delivered": "2026-11-10",
-   "audio": null,
+   "audio": "https://lang-audio-relay.ryouji-jyouji-1994-1223.workers.dev/f/episodes/ru03.mp3",
    "lines": [
     {
      "sp": "Ren",
@@ -11429,7 +11440,7 @@ window.LR_DATA = {
    "title": "第3回 パン屋で買い物",
    "scene": "パン屋",
    "delivered": "2026-11-11",
-   "audio": null,
+   "audio": "https://lang-audio-relay.ryouji-jyouji-1994-1223.workers.dev/f/episodes/zh03.mp3",
    "lines": [
     {
      "sp": "Ren",
@@ -12317,7 +12328,7 @@ window.LR_DATA = {
    "title": "第3回 パン屋で買い物",
    "scene": "パン屋",
    "delivered": "2026-11-11",
-   "audio": null,
+   "audio": "https://lang-audio-relay.ryouji-jyouji-1994-1223.workers.dev/f/episodes/it03.mp3",
    "lines": [
     {
      "sp": "Ren",
