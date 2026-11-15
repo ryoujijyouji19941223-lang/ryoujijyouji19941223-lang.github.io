@@ -275,6 +275,13 @@
   // Re-evaluate the lock periodically so a stale lock clears on
   // screen even without a new snapshot (core.js stale guard).
   setInterval(function () { if (stateData) renderLock(); }, 30000);
+  // Re-evaluate immediately when the app returns to the foreground:
+  // the 30 s timer does not run while backgrounded, so without this a
+  // lock that expired in the background could still be on screen when
+  // the user comes back (2026-11-15 thinking-bug fix).
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden && stateData) renderLock();
+  });
 
   // ---- navigation ----
   function draftKey(room) { return "phoneEntrance.draft." + room + ".v1"; }
@@ -328,7 +335,15 @@
         .onSnapshot(function (doc) {
           stateData = doc.exists ? doc.data() : null;
           renderLock();
-        }, function (err) { console.error("state listen failed", err); }));
+        }, function (err) {
+          // Listener failure: the lock state is unknown from here on.
+          // Clear the display instead of holding a possibly-dead
+          // "thinking" indicator indefinitely (2026-11-15 thinking-bug
+          // fix; the pre-fix handler only logged and kept stateData).
+          console.error("state listen failed", err);
+          stateData = null;
+          renderLock();
+        }));
   }
 
   function stopSubscriptions() {

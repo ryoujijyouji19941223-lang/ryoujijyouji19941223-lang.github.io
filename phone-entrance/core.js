@@ -82,25 +82,36 @@
   }
 
   // A live turn can hold the lock for at most the gateway's reply
-  // timeout (420 s). A state doc whose updated_iso is older than this
-  // cannot describe a live turn — it is a leftover the gateway failed
-  // to clear (e.g. the process died mid-turn, or Firestore was
-  // unreachable when the clear was attempted). Ignoring such stale
-  // locks is display-side defence in depth only: the gateway remains
-  // the owner of lock release (design section 3.3) and resets the
-  // state on every startup.
+  // timeout (420 s). A state doc whose thinking started longer ago
+  // than this cannot describe a live turn — it is a leftover the
+  // gateway failed to clear (e.g. the process died mid-turn, or
+  // Firestore was unreachable when the clear was attempted). Ignoring
+  // such stale locks is display-side defence in depth only: the
+  // gateway remains the owner of lock release (design section 3.3)
+  // and resets the state on every startup.
   var STALE_LOCK_MS = 600000; // 10 min > 420 s gateway timeout
 
   // entrance_state doc -> who is thinking (room id) or null.
   // nowMs is injectable for tests; defaults to Date.now().
+  //
+  // Staleness is judged from thinking_since_iso — the moment the
+  // current turn started — which is what gateway g3 added that field
+  // for. updated_iso is only a fallback for docs without a usable
+  // thinking_since_iso. (The pre-fix guard read updated_iso alone,
+  // so a doc whose updated_iso stayed fresh kept a long-dead turn on
+  // screen forever; see PHONE_THINKING_BUG_REPRO_2026-11-15 S3/S6.)
+  // A doc with NO usable timestamp at all is treated as invalid and
+  // does not lock (fail-closed; the pre-fix code trusted such docs
+  // unconditionally — repro S2).
   function lockFromState(data, nowMs) {
     if (!data || !data.thinking) return null;
     if (!ROOMS[data.thinking]) return null;
+    var since = data.thinking_since_iso ? Date.parse(data.thinking_since_iso) : NaN;
     var updated = data.updated_iso ? Date.parse(data.updated_iso) : NaN;
-    if (!isNaN(updated)) {
-      var now = typeof nowMs === "number" ? nowMs : Date.now();
-      if (now - updated > STALE_LOCK_MS) return null; // stale leftover
-    }
+    var stamp = !isNaN(since) ? since : updated;
+    if (isNaN(stamp)) return null; // fail-closed: no usable timestamp
+    var now = typeof nowMs === "number" ? nowMs : Date.now();
+    if (now - stamp > STALE_LOCK_MS) return null; // stale leftover
     return data.thinking;
   }
 

@@ -1,7 +1,18 @@
 // App-shell cache for installability (production).
 // Same-origin GETs only: Firebase SDK (gstatic) and Firestore traffic are
 // never intercepted, so auth and realtime data always go to the network.
-var CACHE = "phone-entrance-v2";
+//
+// RELEASE RULE (mandatory since 2026-11-15, thinking-bug fix): whenever
+// any shell file (index.html / style.css / firebase-config.js / core.js /
+// app.js) changes, bump CACHE below (v2 -> v3 -> ...). This file is
+// cache-first with no revalidation, and an installed phone only picks up
+// a new shell when sw.js's own bytes change — a release that forgets the
+// bump silently leaves phones running the old build forever.
+// History: v2 = G3 release (2026-11-15). v3 = thinking-lock staleness fix
+// (core.js judges from thinking_since_iso and fails closed on missing
+// timestamps; app.js clears the lock display on listener error and
+// re-evaluates on foreground return), 2026-11-15.
+var CACHE = "phone-entrance-v3";
 var SHELL = [
   "./",
   "./index.html",
