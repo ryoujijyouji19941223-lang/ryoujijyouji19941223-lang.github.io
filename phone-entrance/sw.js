@@ -12,7 +12,11 @@
 // (core.js judges from thinking_since_iso and fails closed on missing
 // timestamps; app.js clears the lock display on listener error and
 // re-evaluates on foreground return), 2026-11-15.
-var CACHE = "phone-entrance-v3";
+// v4 = newest-first conversation display (the latest exchange renders
+// at the top of the chat and entering a room starts there; the typing
+// row moved above the message list to sit with the newest messages),
+// 2026-11-16.
+var CACHE = "phone-entrance-v4";
 var SHELL = [
   "./",
   "./index.html",

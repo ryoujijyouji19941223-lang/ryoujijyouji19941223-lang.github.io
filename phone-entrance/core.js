@@ -10,7 +10,8 @@
 //                           (or timeout / rejected) and stamps turn_id.
 //   entrance_room_nitro   : gateway write-back only. Docs carry
 //                           {kind:"user"|"reply", sender, message, turn_id,
-//                            seq, at, ...}; display order is `seq`.
+//                            seq, at, ...}; the app displays them newest
+//                           first (seq descending, see orderForDisplay).
 //   entrance_state        : single doc `entrance_state` mirroring the
 //                           thinking lock: {thinking: "nitro"|"sakamata"
 //                           |null, updated_iso, thinking_since_iso, ...}.
@@ -81,6 +82,37 @@
     };
   }
 
+  // How many room-history docs the app loads per room: the newest
+  // ROOM_HISTORY_LIMIT by seq (the Firestore query in app.js is
+  // orderBy("seq","desc").limit(ROOM_HISTORY_LIMIT)). Older history
+  // stays in Firestore — the gateway only ever appends room docs and
+  // never deletes them — it is simply outside the app's read window.
+  var ROOM_HISTORY_LIMIT = 200;
+
+  // View models -> display order: NEWEST FIRST (2026-11-16, user's
+  // request). The chat screen shows the latest exchange at the top so
+  // entering a room needs no scrolling; older messages flow downward.
+  // Storage order in app.js stays oldest-first; only the render order
+  // changes. Pure: returns a new array, never mutates the input.
+  // Ordering: seq descending; docs without a seq (never produced by
+  // the gateway, which always stamps seq) go last; ties and seq-less
+  // docs break on `at` descending (missing `at` counts as oldest).
+  function orderForDisplay(views) {
+    return views.slice().sort(function (a, b) {
+      var aSeq = typeof a.seq === "number" ? a.seq : null;
+      var bSeq = typeof b.seq === "number" ? b.seq : null;
+      if (aSeq !== null && bSeq !== null && aSeq !== bSeq) return bSeq - aSeq;
+      if (aSeq !== null && bSeq === null) return -1;
+      if (aSeq === null && bSeq !== null) return 1;
+      var aAt = typeof a.at === "number" ? a.at : null;
+      var bAt = typeof b.at === "number" ? b.at : null;
+      if (aAt === bAt) return 0;
+      if (aAt === null) return 1;
+      if (bAt === null) return -1;
+      return bAt - aAt;
+    });
+  }
+
   // A live turn can hold the lock for at most the gateway's reply
   // timeout (420 s). A state doc whose thinking started longer ago
   // than this cannot describe a live turn — it is a leftover the
@@ -144,9 +176,11 @@
     STATE_DOC: STATE_DOC,
     SENDER_NAME: SENDER_NAME,
     MAX_MESSAGE_CHARS: MAX_MESSAGE_CHARS,
+    ROOM_HISTORY_LIMIT: ROOM_HISTORY_LIMIT,
     jstIso: jstIso,
     buildInboxDoc: buildInboxDoc,
     roomDocToView: roomDocToView,
+    orderForDisplay: orderForDisplay,
     lockFromState: lockFromState,
     isOwner: isOwner,
     isConfigReady: isConfigReady

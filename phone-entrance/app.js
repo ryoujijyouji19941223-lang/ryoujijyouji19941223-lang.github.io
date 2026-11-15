@@ -7,7 +7,10 @@
 //            rooms is always free, and drafts/history stay available
 //            while the other room is thinking.
 //   send  -> add doc to entrance_inbox {room, status:"queued", ...}
-//   read  -> entrance_room_<room> (order by seq), written by gateway
+//   read  -> entrance_room_<room> (newest ROOM_HISTORY_LIMIT by seq),
+//            written by gateway; the chat displays them newest first
+//            (2026-11-16: latest exchange at the top, no scrolling
+//            needed when entering a room)
 //   lock  -> entrance_state/entrance_state {thinking: room|null}
 //            One generation at a time across BOTH rooms (§3.3): while
 //            anyone is thinking, sending is disabled everywhere; the
@@ -186,14 +189,34 @@
   }
 
   // ---- chat view ----
+  // Display order is NEWEST FIRST (2026-11-16): the latest exchange
+  // sits at the top of the list, so entering a room shows it with no
+  // scrolling and older messages flow downward. Storage stays
+  // oldest-first (see the snapshot handler); Core.orderForDisplay
+  // produces the render order. System notes describe the latest
+  // activity, so they render above the messages, newest note first.
+  // The typing row likewise lives above the list (index.html), next
+  // to the just-sent message it belongs to.
+  // Scroll handling mirrors the order: while the user is near the
+  // top, stay pinned to the top so new arrivals are visible at once;
+  // if they have scrolled down into older history, shift by the
+  // height the new top content added so their reading position does
+  // not jump.
   function renderMessages() {
     if (currentView !== els.chatView || !currentRoom) return;
     var room = Core.ROOMS[currentRoom];
     var data = roomData[currentRoom];
-    var nearBottom = els.messages.scrollHeight - els.messages.scrollTop -
-      els.messages.clientHeight < 120;
+    var nearTop = els.messages.scrollTop < 120;
+    var prevTop = els.messages.scrollTop;
+    var prevHeight = els.messages.scrollHeight;
     els.messages.innerHTML = "";
-    data.messages.forEach(function (m) {
+    (notes[currentRoom] || []).slice().reverse().forEach(function (n) {
+      var row = document.createElement("div");
+      row.className = "sys-note";
+      row.textContent = n;
+      els.messages.appendChild(row);
+    });
+    Core.orderForDisplay(data.messages).forEach(function (m) {
       var div = document.createElement("div");
       div.className = "msg " + (m.from === "user" ? "user" : m.from);
       if (m.from !== "user") {
@@ -205,12 +228,6 @@
       div.appendChild(document.createTextNode(m.text));
       els.messages.appendChild(div);
     });
-    (notes[currentRoom] || []).forEach(function (n) {
-      var row = document.createElement("div");
-      row.className = "sys-note";
-      row.textContent = n;
-      els.messages.appendChild(row);
-    });
     if (data.error) {
       els.roomNote.hidden = false;
       els.roomNote.textContent = currentRoom === "sakamata"
@@ -220,7 +237,12 @@
       els.roomNote.hidden = true;
       els.roomNote.textContent = "";
     }
-    if (nearBottom) els.messages.scrollTop = els.messages.scrollHeight;
+    if (nearTop) {
+      els.messages.scrollTop = 0;
+    } else {
+      els.messages.scrollTop = Math.max(0,
+        prevTop + (els.messages.scrollHeight - prevHeight));
+    }
   }
 
   // Thinking-lock presentation (design §3.3): while anyone thinks,
@@ -295,6 +317,9 @@
     loadDraft(room);
     show(els.chatView);
     renderMessages();
+    // Newest first: entering a room always starts at the top, where
+    // the latest exchange is (2026-11-16).
+    els.messages.scrollTop = 0;
     renderLock();
   }
   function backToRooms() {
@@ -310,10 +335,16 @@
   function startSubscriptions() {
     Core.ROOM_ORDER.forEach(function (id) {
       var room = Core.ROOMS[id];
-      var q = db.collection(room.collection).orderBy("seq", "desc").limit(200);
+      // Read window: the newest ROOM_HISTORY_LIMIT docs by seq.
+      // Firestore keeps the full history (the gateway never deletes
+      // room docs); older docs are simply not loaded by the app.
+      var q = db.collection(room.collection).orderBy("seq", "desc")
+        .limit(Core.ROOM_HISTORY_LIMIT);
       unsubscribers.push(q.onSnapshot(function (snap) {
         var list = [];
         snap.forEach(function (doc) { list.push(Core.roomDocToView(id, doc.data())); });
+        // Storage stays oldest-first; renderMessages displays the
+        // same list newest-first via Core.orderForDisplay.
         list.reverse();
         roomData[id].messages = list;
         roomData[id].error = null;

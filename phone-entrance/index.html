@@ -50,11 +50,13 @@
   <!-- 会話画面（部屋ごと） -->
   <section id="chat-view" hidden>
     <p id="room-note" class="room-note" hidden></p>
-    <div id="messages" class="messages"></div>
+    <!-- 考え中表示は会話リストの上（最新側）に置く：会話は新しい順に
+         上から並ぶため、送信直後の自分の文と並んで見える（2026-11-16） -->
     <div id="typing-row" class="typing-row" hidden>
       <div class="typing-bubble"><span></span><span></span><span></span></div>
       <span id="typing-label" class="typing-label">考え中…</span>
     </div>
+    <div id="messages" class="messages"></div>
     <p id="composer-note" class="composer-note" hidden></p>
     <form id="composer" class="composer">
       <textarea id="input" rows="1" placeholder="メッセージを書く" autocomplete="off"></textarea>
