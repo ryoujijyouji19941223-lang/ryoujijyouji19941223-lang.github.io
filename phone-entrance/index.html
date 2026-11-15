@@ -12,6 +12,7 @@
 </head>
 <body>
 <header class="app-header">
+  <button id="back-btn" class="text-btn" hidden>＜ 部屋一覧</button>
   <h1 id="header-title">ふたりの部屋</h1>
   <button id="signout-btn" class="text-btn" hidden>サインアウト</button>
 </header>
@@ -41,8 +42,14 @@
     <button id="denied-signout-btn" class="primary-btn">サインアウト</button>
   </section>
 
-  <!-- 会話画面（ニトロの部屋） -->
+  <!-- 部屋一覧（設計 §3.2） -->
+  <section id="rooms-view" hidden>
+    <div id="room-list" class="room-list"></div>
+  </section>
+
+  <!-- 会話画面（部屋ごと） -->
   <section id="chat-view" hidden>
+    <p id="room-note" class="room-note" hidden></p>
     <div id="messages" class="messages"></div>
     <div id="typing-row" class="typing-row" hidden>
       <div class="typing-bubble"><span></span><span></span><span></span></div>

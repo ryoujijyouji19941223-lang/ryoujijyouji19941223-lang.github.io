@@ -12,7 +12,9 @@
 //                           {kind:"user"|"reply", sender, message, turn_id,
 //                            seq, at, ...}; display order is `seq`.
 //   entrance_state        : single doc `entrance_state` mirroring the
-//                           thinking lock: {thinking: "nitro"|null, ...}.
+//                           thinking lock: {thinking: "nitro"|"sakamata"
+//                           |null, updated_iso, thinking_since_iso, ...}.
+//                           Written by gateway g3-1.0 (both rooms).
 (function (global) {
   "use strict";
 
@@ -22,11 +24,20 @@
       name: "ニトロ",
       roomTitle: "ニトロの部屋",
       collection: "entrance_room_nitro"
+    },
+    sakamata: {
+      id: "sakamata",
+      name: "サカマタ",
+      roomTitle: "サカマタの部屋",
+      collection: "entrance_room_sakamata"
     }
-    // sakamata is G3 (after the user's contact-resumption decision).
-    // The gateway rejects any other room until then, so no room entry
-    // is exposed here in production v1.
+    // G3 (2026-11-15, user's instruction): Sakamata's room is connected
+    // in the same shape as Nitro's. Until the G3 Firestore rules are
+    // applied in the console, reads of entrance_room_sakamata and
+    // sakamata inbox creates are denied by the G2 ruleset; the app
+    // treats that room as "being prepared" instead of failing.
   };
+  var ROOM_ORDER = ["nitro", "sakamata"];
 
   var INBOX_COLLECTION = "entrance_inbox";
   var STATE_COLLECTION = "entrance_state";
@@ -70,10 +81,27 @@
     };
   }
 
+  // A live turn can hold the lock for at most the gateway's reply
+  // timeout (420 s). A state doc whose updated_iso is older than this
+  // cannot describe a live turn — it is a leftover the gateway failed
+  // to clear (e.g. the process died mid-turn, or Firestore was
+  // unreachable when the clear was attempted). Ignoring such stale
+  // locks is display-side defence in depth only: the gateway remains
+  // the owner of lock release (design section 3.3) and resets the
+  // state on every startup.
+  var STALE_LOCK_MS = 600000; // 10 min > 420 s gateway timeout
+
   // entrance_state doc -> who is thinking (room id) or null.
-  function lockFromState(data) {
+  // nowMs is injectable for tests; defaults to Date.now().
+  function lockFromState(data, nowMs) {
     if (!data || !data.thinking) return null;
-    return ROOMS[data.thinking] ? data.thinking : null;
+    if (!ROOMS[data.thinking]) return null;
+    var updated = data.updated_iso ? Date.parse(data.updated_iso) : NaN;
+    if (!isNaN(updated)) {
+      var now = typeof nowMs === "number" ? nowMs : Date.now();
+      if (now - updated > STALE_LOCK_MS) return null; // stale leftover
+    }
+    return data.thinking;
   }
 
   // Client-side owner gate (display only; Firestore rules enforce).
@@ -98,6 +126,8 @@
 
   var api = {
     ROOMS: ROOMS,
+    ROOM_ORDER: ROOM_ORDER,
+    STALE_LOCK_MS: STALE_LOCK_MS,
     INBOX_COLLECTION: INBOX_COLLECTION,
     STATE_COLLECTION: STATE_COLLECTION,
     STATE_DOC: STATE_DOC,

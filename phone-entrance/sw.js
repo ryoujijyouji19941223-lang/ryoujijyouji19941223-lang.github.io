@@ -1,7 +1,7 @@
 // App-shell cache for installability (production).
 // Same-origin GETs only: Firebase SDK (gstatic) and Firestore traffic are
 // never intercepted, so auth and realtime data always go to the network.
-var CACHE = "phone-entrance-v1";
+var CACHE = "phone-entrance-v2";
 var SHELL = [
   "./",
   "./index.html",
