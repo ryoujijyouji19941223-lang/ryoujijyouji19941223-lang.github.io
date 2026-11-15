@@ -1,0 +1,1 @@
+{"background_color":"#101426","description":"ニトロと話すスマホ入口（本番）。関所経由でミニPCの住人に繋がる、Muse 非依存の独立アプリ","display":"standalone","icons":[{"sizes":"192x192","src":"icons/icon-192.png","type":"image/png"},{"sizes":"512x512","src":"icons/icon-512.png","type":"image/png"}],"lang":"ja","name":"ふたりの部屋","scope":"./","short_name":"ふたりの部屋","start_url":"./index.html","theme_color":"#101426"}
