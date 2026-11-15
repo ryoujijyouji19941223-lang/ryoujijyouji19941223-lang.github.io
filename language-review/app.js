@@ -116,6 +116,21 @@ function peekLine(key) {
 function recapDue(ep) { return addDays(ep.delivered, 3); }
 function testDue(ep) { return addDays(ep.delivered, 7); } // 翌週の同じ曜日
 
+/* 失効ルール（2026-11-16再設計）：配信日から14日を過ぎた未完了のおさらい・テストは「流れた」扱い。
+   キュー（借金）には出さない。失効は失敗ではない。本棚からは引き続きいつでも開ける。 */
+var EXPIRY_DAYS = 14;
+function isExpired(ep, today) { return diffDays(ep.delivered, today) > EXPIRY_DAYS; }
+function expiredPendingCount(today) {
+  var n = 0;
+  EPISODES.forEach(function (ep) {
+    var es = state.eps[ep.id] || {};
+    if (!isExpired(ep, today)) return;
+    if (!es.recap && recapDue(ep) <= today) n++;
+    else if (es.recap && !es.test && testDue(ep) <= today) n++;
+  });
+  return n;
+}
+
 function buildQueue(today) {
   var weakItems = [];
   var mainItems = [];
@@ -153,6 +168,7 @@ function buildQueue(today) {
     var es = state.eps[ep.id] || {};
     var rD = recapDue(ep);
     var tD = testDue(ep);
+    if (isExpired(ep, today)) return; // 失効（流れた）分はキューに出さない
     if (!es.recap && rD <= today) {
       mainItems.push({ kind: 'recap', epId: ep.id, due: rD, reason: fmtMD(ep.delivered) + '分・3日後のおさらい' });
     } else if (es.recap && !es.test && tD <= today) {
@@ -834,9 +850,13 @@ function renderQueue() {
   var items = buildQueue(today);
   var box = document.getElementById('queue-list');
   var html = mixedSectionHtml(today);
+  var expN = expiredPendingCount(today);
+  var expNote = expN > 0
+    ? '<p class="hint">14日を過ぎた未完了分が ' + expN + ' 件、流れました（失効）。失敗ではありません。聞き直したい時は本棚からいつでも開けます。</p>'
+    : '';
   if (items.length === 0) {
     var nx = nextDueLabel(today);
-    html += '<div class="empty">今日の期日分は終わりです。お疲れさま。<br>' + esc(nx) + '</div>';
+    html += '<div class="empty">今日の期日分は終わりです。お疲れさま。<br>' + esc(nx) + '</div>' + expNote;
     box.innerHTML = html;
     return;
   }
@@ -881,6 +901,7 @@ function renderQueue() {
   if (items.length > QUEUE_CAP) {
     html += '<p class="hint">ほか ' + (items.length - QUEUE_CAP) + ' 件は、上の分が終わると出てきます。</p>';
   }
+  html += expNote;
   box.innerHTML = html;
 }
 
